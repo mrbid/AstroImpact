@@ -1,7 +1,7 @@
 name: fractalattackonline2
 base: core20
 version: '1.0'
-summary: Play online with friends to save all the martians before their home planet is destoyed!
+summary: Save the Martians!
 description: |
   Play online with friends to save all the martians before their home planet is destoyed!
   
@@ -37,7 +37,7 @@ apps:
 
 parts:
   fractalattackonline2:
-    source: https://notabug.org/FractalAttack/FractalAttackOnlineUDP
+    source: https://github.com/mrbid/FractalAttackOnline
     source-type: git
     plugin: make
     build-packages:
