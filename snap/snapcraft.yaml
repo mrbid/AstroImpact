@@ -1,4 +1,4 @@
-name: fractalattackonline
+name: fractalattackonline2
 base: core20
 version: '1.0'
 summary: Play online with friends to save all the martians before their home planet is destoyed!
@@ -23,7 +23,7 @@ architectures:
     run-on: armhf
 
 apps:
-  fractalattackonline:
+  fractalattackonline2:
     extensions: [gnome-3-38]
     command: fractalattackonline
     plugs:
@@ -36,7 +36,7 @@ apps:
     - network
 
 parts:
-  fractalattackonline:
+  fractalattackonline2:
     source: https://notabug.org/FractalAttack/FractalAttackOnlineUDP
     source-type: git
     plugin: make
