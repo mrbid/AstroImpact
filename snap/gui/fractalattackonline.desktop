@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Fractal Attack Online
+Comment=Play online with friends to save all the martians before their home planet is destoyed!
+StartupNotify=false
+Exec=fractalattackonline
+Icon=${SNAP}/meta/gui/fractalattackonline.png
+Terminal=false
+Type=Application
+Categories=Application;Game;Simulation;

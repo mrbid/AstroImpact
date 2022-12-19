@@ -1,0 +1,69 @@
+message types:
+	asteroid_pos (0x00):
+		uint64_t microtimestamp;
+		for each asteroid:
+			uint16_t id;
+			vec vel, pos;
+			f32 rot, scale;
+
+	player_pos (0x01):
+		server to client:
+			uint64_t microtimestamp; // only useful with prediction
+			for each player:
+				uint8_t id;
+				vec pos;
+				vec vel; // only useful with prediction
+		client to server:
+			uint64_t microtimestamp; // only useful with prediction
+			vec pos;
+			vec vel; // only useful with prediction
+
+	sun_pos (0x02):
+		uint64_t microtimestamp;
+		f32 location;
+
+	asteroid_destroyed (0x03):
+		server to client: // reliable
+			uint64_t microtimestamp;
+			uint16_t id;
+			vec newvel, newpos;
+			f32 rot, scale;
+		client to server: // confirmed by the server echoing the details back
+			uint64_t microtimestamp;
+			uint16_t id;
+
+	exo_hit (0x04): // reliable
+		uint64_t microtimestamp;
+		uint16_t hit_id;
+		uint16_t asteroid_id;
+		vec oldvel, oldpos, newvel, newpos;
+		f32 oldrot, oldscale, newrot, newscale;
+		f32 damage_ratio; // > 10.f if the game should end
+
+	player_disconnected (0x05): // reliable
+			uint8_t id;
+
+	exo_hit_recvd (0x80):
+		uint16_t hid_id;
+
+	asteroid_destroyed_recvd (0x81):
+		uint16_t id;
+
+	player_disconnected_recvd (0x82):
+		uint8_t id;
+
+	register_accepted (0xC0):
+		uint8_t your_id;
+		uint16_t num_asteroids; // 0 = 0x10000
+
+	bad_register_value (0xFE): // will eventually add an asteroids count to the register type and make it dynamic
+		<no data>
+
+	register (0xFF):
+		uint64_t epoch;
+		uint16_t num_asteroids; // 0 = 0x10000
+
+message format:
+	uint64_t protocol_id (0x75F6073677E10C44); // don't want random udp packets 
+	uint8_t message type;
+	<message-specific data>;

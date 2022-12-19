@@ -1,0 +1,6 @@
+Package: FractalAttack
+Version: 0.0.1
+Section: games
+Priority: optional
+Architecture: amd64
+Description: FractalAttack client and server

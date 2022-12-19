@@ -1,0 +1,47 @@
+name: fractalattackonline
+base: core20
+version: '1.0'
+summary: Play online with friends to save all the martians before their home planet is destoyed!
+description: |
+  Play online with friends to save all the martians before their home planet is destoyed!
+  
+  Use W,A,S,D,Q,E,SPACE & LEFT SHIFT to move around.
+  L-CTRL / Right Click to Brake.
+  Escape / Left Click to free mouse focus.
+  R = Toggle auto-tilt/roll around planet.
+  F = FPS to console.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+    run-on: amd64
+  - build-on: arm64
+    run-on: arm64
+  - build-on: armhf
+    run-on: armhf
+
+apps:
+  fractalattackonline:
+    extensions: [gnome-3-38]
+    command: fractalattackonline
+    plugs:
+    - desktop
+    - desktop-legacy
+    - gsettings
+    - opengl
+    - wayland
+    - x11
+    - network
+
+parts:
+  fractalattackonline:
+    source: https://notabug.org/FractalAttack/FractalAttackOnlineUDP
+    source-type: git
+    plugin: make
+    build-packages:
+    - libglfw3-dev
+    stage-packages:
+    - libglfw3
+    - libgles2
