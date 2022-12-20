@@ -98,7 +98,7 @@ deb/usr/games/fatserver: bin/fatserver
 
 
 install:
-	cp bin/fat $(DESTDIR)/fractalattackonline
+	cp bin/fat $(DESTDIR)/fractalattackonline2
 
 uninstall:
-	rm $(DESTDIR)/fractalattackonline
+	rm $(DESTDIR)/fractalattackonline2
