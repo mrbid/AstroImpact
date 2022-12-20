@@ -42,8 +42,6 @@ $(call DEPS,inc/vec)
 #$(call DEPS,inc/protocol)
 #	$(CC) $(CFLAGS) -c $< -o $@
 
-inc/munmap.o: inc/munmap.asm
-	nasm -f elf64 $< -o $@
 
 bin/fat: client/main.o client/glad_gl.o assets/client_models.o assets/images1.o assets/images2.o assets/images3.o assets/images4.o inc/vec.o
 	$(CC) $^ $(LDFLAGS) -lglfw -lpthread -o $@
