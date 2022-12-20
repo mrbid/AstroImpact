@@ -3,12 +3,19 @@
 
 This is a highly engineered version of Fractal Attack for online play.
 
-### Attributions
+Work In Progress (WIP)
+
+### Snapcraft Store
+https://snapcraft.io/fractalattackonline2
+
+## Attributions
+
+#### Planet
 https://www.solarsystemscope.com/textures/
 - https://www.solarsystemscope.com/textures/download/4k_eris_fictional.jpg
 - https://www.solarsystemscope.com/textures/download/8k_venus_surface.jpg
 
-Asteroids
+#### Asteroids
 - https://img.freepik.com/free-photo/black-white-details-moon-texture-concept_23-2149535760.jpg?w=2000
 - https://img.freepik.com/free-photo/black-white-details-moon-texture-concept_23-2149535764.jpg?w=2000
 - https://static9.depositphotos.com/1011845/1198/i/600/depositphotos_11983420-stock-photo-moon-ground-semalss-texture.jpg
@@ -21,3 +28,7 @@ Asteroids
 - https://filterforge.com/filters/1134.jpg
 - https://filterforge.com/filters/214.jpg
 - https://filterforge.com/filters/1306.jpg
+- https://www.deviantart.com/hhh316/art/Seamless-Fire-Texture-333891187
+
+#### UFO
+- https://www.turbosquid.com/3d-models/sci-fi-ufo-2-3d-model/1062607# _(This was provided from the Author James directly over email ([jamesrender3d@gmail.com](mailto:jamesrender3d@gmail.com)) and NOT purchased from Turbosquid under the Turbosquid license that does not allow use of assets in open-source projects, a custom license was agree'd over email with James where he agree'd we could use it in our open-source project and a payment was made to him based on this agreement this does not give anyone else the right to use this 3D asset (model or textures) without his permission or payment and this asset is not licensed under GPL)_
