@@ -2,18 +2,6 @@ INCLUDEFLAGS = -I.
 
 CFLAGS += $(INCLUDEFLAGS) -Ofast -DSEIR_RAND
 
-ifneq ($(native), true)
-	CFLAGS += -march=native
-endif
-
-ifeq ($(debug), true)
-	CFLAGS += -DVERBOSE -DDEBUG_GL
-endif
-
-ifeq ($(test), true)
-	CFLAGS += -DFAST_START
-endif
-
 LDFLAGS = -lm
 
 DEPS = $(shell $(CC) $(INCLUDEFLAGS) -MM -MT $(1).o $(1).c | sed -z 's/\\\n //g')
