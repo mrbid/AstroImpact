@@ -36,18 +36,6 @@ $(call DEPS,client/glad_gl)
 assets/client_models.o: assets/models.c assets/models.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-assets/images1.o: assets/images1.c assets/images1.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-assets/images2.o: assets/images2.c assets/images2.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-assets/images3.o: assets/images3.c assets/images3.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-assets/images4.o: assets/images4.c assets/images4.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
 $(call DEPS,inc/vec)
 	$(CC) $(CFLAGS) -c $< -o $@
 
