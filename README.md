@@ -5,6 +5,9 @@ This is a highly engineered version of Fractal Attack for online play.
 
 Work In Progress (WIP)
 
+### Active Git
+https://notabug.org/FractalAttack/FractalAttackOnlineUDP
+
 ### Snapcraft Store
 https://snapcraft.io/fractalattackonline2
 
