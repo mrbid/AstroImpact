@@ -1,5 +1,5 @@
 # AstroImpact
-### Save the planet from inevitable annihilation! Online, with your freinds!
+### Save the planet from inevitable annihilation! Online, with your friends!
 
 * **FlatHub:** https://flathub.org/apps/com.voxdsp.AstroImpact
 * **Snapcraft:** https://snapcraft.io/astroimpact
