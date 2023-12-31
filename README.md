@@ -11,9 +11,9 @@
 
 ![Screenshot of the AstroImpact game](https://us.v-cdn.net/6030874/uploads/editor/aa/ubn8tqbf6irz.png)
 
-## How do you play it then?
+## How to play
 
-Well you have to fly around in your UFO, preferably with friends, crashing into approaching asteroids to stop them from hitting the planet surface.
+You have to fly around in your UFO, preferably with friends, crashing into approaching asteroids to stop them from hitting the planet surface.
 
 * **First Tier:** The longer you can prevent the first hit on the planet.
 * **Second Tier:** The longer you can prevent the planet from being annihilated!
