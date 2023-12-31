@@ -6,7 +6,7 @@
 ### **FlatHub:** https://flathub.org/apps/com.voxdsp.AstroImpact
 
 ### **Official Website:** [AstroImpact.net](https://AstroImpact.net)
-### **Video:** [Vimeo.com](https://vimeo.com/836414581)
+### **Video:** [Vimeo.com](https://vimeo.com/836414581) or [Youtube.com](https://www.youtube.com/watch?v=5qUD3DM8rD8)
 
 ~~Work In Progress (WIP)~~
 **Completed.** *We have left some code for "pods" dormant [[assets here]](assets/old_assets.c) and code in the [[pre_declutter_main]](https://notabug.org/AstroImpact/AstroImpact/src/pre_declutter_main) branch, it was going to be a feature that little escape pods pop out of the planet and that you could pick them up and drop them at a safe zone to evacuate the planet, but we have little interest investing time in that direction now.*
