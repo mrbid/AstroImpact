@@ -22,7 +22,7 @@
 		<screenshot>https://us.v-cdn.net/6030874/uploads/editor/qt/6vwxxn05aklb.png</screenshot>
 		<screenshot>https://us.v-cdn.net/6030874/uploads/editor/aa/ubn8tqbf6irz.png</screenshot>
 	</screenshots>
-	<url type="homepage">https://notabug.org/AstroImpact/AstroImpact</url>
+	<url type="homepage">https://github.com/mrbid/AstroImpact</url>
 	<releases>
 		<release version="1.0" date="2023-10-31" />
 	</releases>

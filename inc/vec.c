@@ -5,6 +5,8 @@
     Portable floating-point Vec3 lib with basic SSE support
 */
 
+#include <sys/types.h>
+
 #if !defined(__linux__) || defined(NOSSE)
     #define SEIR_RAND
 #endif

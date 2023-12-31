@@ -1,0 +1,57 @@
+name: astroimpact
+base: core22
+version: '1.0'
+license: GPL-2.0-only
+summary: A multi-player space game, defend the planet from the incoming asteroids!
+description: |
+  Play with friends online to defend the planet! Longest time to first impact or longest time to 100% damage. You destroy asteroids by flying into them before they hit the planet!
+  
+  First Tier: The longer you can prevent the first hit on the planet.
+  Second Tier: The longer you can prevent the planet from being annihilated!
+  Third Tier: How many asteroids did you and your friends collectively destroy?
+
+  Just make sure you all start on the same epoch! The first person to create the epoch sets the number of approaching asteroids in each wave.
+
+  Mouse locks when you click on the window, press ESCAPE to unlock the mouse.
+
+  Use W,A,S,D,Q,E,SPACE & LEFT SHIFT to move around.
+  L-CTRL / Right Click to Brake.
+  L-ALT / Mouse 3/4 Click to Instant Brake.
+  R = Toggle auto-tilt/roll around planet.
+  Q+E to stop rolling.
+  F = FPS to console.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: [amd64]
+    build-for: [amd64]
+  - build-on: [arm64]
+    build-for: [arm64]
+  - build-on: [armhf]
+    build-for: [armhf]
+
+apps:
+  astroimpact:
+    extensions: [gnome]
+    command: astroimpact
+    plugs:
+    - desktop
+    - desktop-legacy
+    - gsettings
+    - opengl
+    - wayland
+    - x11
+
+parts:
+  astroimpact:
+    source: https://github.com/mrbid/astroimpact
+    source-type: git
+    plugin: make
+    source-subdir: snap
+    build-packages:
+    - libglfw3-dev
+    stage-packages:
+    - libglfw3
+    - libgles2
