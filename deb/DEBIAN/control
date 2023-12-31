@@ -1,6 +1,7 @@
-Package: FractalAttack
-Version: 0.0.1
+Package: AstroImpact
+Version: 1.0
 Section: games
 Priority: optional
 Architecture: amd64
-Description: FractalAttack client and server
+Description: AstroImpact client and server
+Maintainer: James William Fletcher <tux@tuxpusher.com>

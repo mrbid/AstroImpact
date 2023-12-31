@@ -16,6 +16,8 @@
 
     I'm not a high poly modeller and I like to target low end hardware.
 
+    Make sure meshes you export have been triangulated first.
+
     Compile: gcc ptf.c -lm -Ofast -o ptf
     Usage: ./ptf filename_noextension
 
@@ -137,7 +139,7 @@ int main(int argc, char** argv)
                 sprintf(add, "%g,%g,%g,", nx, ny, nz);
                 strcat(normal_array, add);
 
-                sprintf(add, "%g,%g,", r, g);
+                sprintf(add, "%g,%g,", r, -g); // flipping the V/T coordinate for OpenGL bottom up texture coordinates
                 strcat(color_array, add);
 
                 mode2 = 2;
@@ -241,8 +243,8 @@ int main(int argc, char** argv)
         printf("Output: %s.h (UINT)\nMODE: %u\n", name, mode2);
     }
 
+    fclose(f);
     const float mins = ((float)(time(0)-st))/60.f;
     if(mins > 0.001f){printf("Time Taken: %.2f mins\n", mins);}
-    fclose(f);
     return 0;
 }

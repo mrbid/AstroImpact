@@ -4,7 +4,7 @@
         December 2022 - esAux2.h v2.1.3.3.7
 --------------------------------------------------
     
-    !! Modified for; https://github.com/mrbid/FractalAttack
+    !! Modified for; https://notabug.org/FractalAttack/FractalAttackOnlineUDP
 
     A pretty good color converter: https://www.easyrgb.com/en/convert.php
 
@@ -75,10 +75,13 @@ GLuint debugShader(GLuint shader_program);
 void makeAllShaders();
 
 void makeFullbright();
+void makeFullbright1();
+void makeFullbrightT();
 void makeLambert();
 void makeLambert1();
 void makeLambert2();
 void makeLambert3();
+void makeLambert4();
 void makePhong();
 void makePhong1();
 void makePhong2();
@@ -87,6 +90,7 @@ void makePhong3();
 // full bright
 void shadeFullbrightT(GLint* position, GLint* projection, GLint* modelview, GLint* texcoord, GLint* sampler);                             // texture + no shading
 void shadeFullbright(GLint* position, GLint* projection, GLint* modelview, GLint* color, GLint* opacity);                                 // solid color + no shading
+void shadeFullbright1(GLint* position, GLint* projection, GLint* modelview, GLint* color, GLint* opacity);                                // colors + no shading
 
 // no texture
 void shadeLambert(GLint* position, GLint* projection, GLint* modelview, GLint* lightpos, GLint* color, GLint* opacity);                   // solid color + no normals
@@ -249,7 +253,7 @@ const GLchar* vt0 =
 
 const GLchar* ft0 =
     "#version 100\n"
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec2 vtc;\n"
     "uniform sampler2D tex;\n"
     "void main()\n"
@@ -277,7 +281,35 @@ const GLchar* v0 =
 
 const GLchar* f0 =
     "#version 100\n"
-    "precision mediump float;\n"
+    "precision highp float;\n"
+    "varying vec3 vertCol;\n"
+    "varying float vertOpa;\n"
+    "void main()\n"
+    "{\n"
+        "gl_FragColor = vec4(vertCol, vertOpa);\n"
+    "}\n";
+
+//
+
+const GLchar* v01 =
+    "#version 100\n"
+    "uniform mat4 modelview;\n"
+    "uniform mat4 projection;\n"
+    "attribute vec3 color;\n"
+    "uniform float opacity;\n"
+    "attribute vec4 position;\n"
+    "varying vec3 vertCol;\n"
+    "varying float vertOpa;\n"
+    "void main()\n"
+    "{\n"
+        "vertCol = color;\n"
+        "vertOpa = opacity;\n"
+        "gl_Position = projection * modelview * position;\n"
+    "}\n";
+
+const GLchar* f01 =
+    "#version 100\n"
+    "precision highp float;\n"
     "varying vec3 vertCol;\n"
     "varying float vertOpa;\n"
     "void main()\n"
@@ -358,7 +390,6 @@ const GLchar* v14 =
     "attribute vec2 texcoord;\n"
     "varying vec3 vertPos;\n"
     "varying vec3 vertNorm;\n"
-    "varying vec3 vertCol;\n"
     "varying float vertOpa;\n"
     "varying vec3 vlightPos;\n"
     "varying vec2 vtc;\n"
@@ -375,7 +406,7 @@ const GLchar* v14 =
 
 const GLchar* f14 =
     "#version 100\n"
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec3 vertPos;\n"
     "varying vec3 vertNorm;\n"
     "varying float vertOpa;\n"
@@ -390,6 +421,43 @@ const GLchar* f14 =
         "float lambertian = max(dot(lightDir, normalize(vertNorm)), 0.0);\n"
         "gl_FragColor = vec4((ambientColor + lambertian*tcol.xyz) * clamp(1.0 - (length(vertPos)*0.09), 0.0, 1.0), vertOpa);\n" // mod
     "}\n";
+
+// const GLchar* v14 =
+//     "#version 100\n"
+//     "uniform mat4 modelview;\n"
+//     "uniform mat4 projection;\n"
+//     "uniform float opacity;\n"
+//     "uniform vec3 lightpos;\n"
+//     "attribute vec4 position;\n"
+//     "attribute vec3 normal;\n"
+//     "attribute vec2 texcoord;\n"
+//     "varying float lambertian;\n"
+//     "varying float vertOpa;\n"
+//     "varying vec2 vtc;\n"
+//     "void main()\n"
+//     "{\n"
+//         "vtc = texcoord;\n"
+//         "vec4 vertPos4 = modelview * position;\n"
+//         "vec3 vertPos = vertPos4.xyz / vertPos4.w;\n"
+//         "vec3 vertNorm = vec3(modelview * vec4(normal, 0.0));\n"
+//         "vec3 lightDir = normalize(lightpos - vertPos);\n"
+//         "lambertian = max(dot(lightDir, normalize(vertNorm)), 0.0);\n"
+//         "vertOpa = opacity;\n"
+//         "gl_Position = projection * vertPos4;\n"
+//     "}\n";
+
+// const GLchar* f14 =
+//     "#version 100\n"
+//     "precision highp float;\n"
+//     "varying float lambertian;\n"
+//     "varying float vertOpa;\n"
+//     "varying vec2 vtc;\n"
+//     "uniform sampler2D tex;\n"
+//     "void main()\n"
+//     "{\n"
+//         "vec4 tcol = texture2D(tex, vtc);\n"
+//         "gl_FragColor = vec4((tcol.xyz * 0.148) + lambertian*tcol.xyz, vertOpa);\n"
+//     "}\n";
 
 // color array + normal array
 const GLchar* v12 =
@@ -444,7 +512,7 @@ const GLchar* v13 =
 
 const GLchar* f1 =
     "#version 100\n"
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec3 vertPos;\n"
     "varying vec3 vertNorm;\n"
     "varying vec3 vertCol;\n"
@@ -460,7 +528,7 @@ const GLchar* f1 =
 
 const GLchar* f11 = // no ambient light
     "#version 100\n"
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec3 vertPos;\n"
     "varying vec3 vertNorm;\n"
     "varying vec3 vertCol;\n"
@@ -577,7 +645,7 @@ const GLchar* v23 =
    
 const GLchar* f2 = 
     "#version 100\n" 
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec3 normalInterp;\n"
     "varying vec3 vertPos;\n"
     "varying vec3 vertCol;\n"
@@ -640,7 +708,7 @@ const GLchar* f2 =
 
 // const GLchar* f3 = 
 //     "#version 100\n" 
-//     "precision mediump float;\n"
+//     "precision highp float;\n"
 //     "varying vec3 normalInterp;\n"
 //     "varying vec3 vertPos;\n"
 //     "varying float vertOpa;\n"
@@ -707,7 +775,7 @@ const GLchar* v24 =
 
 const GLchar* f3 = 
     "#version 100\n" 
-    "precision mediump float;\n"
+    "precision highp float;\n"
     "varying vec3 normalInterp;\n"
     "varying vec3 vertPos;\n"
     "varying float vertOpa;\n"
@@ -722,7 +790,16 @@ const GLchar* f3 =
         "vec3 normal = normalize(normalInterp);\n"
         "vec3 texnorm = -((texture2D(normal_map, vtc).rgb * 2.0) - 1.0);\n"
         "texnorm = normalize(vec3(pnm * vec4(texnorm, 0.0)));\n"
+
         "if(dot(normal, texnorm) < 0.0){texnorm *= -1.0;}\n"
+
+        // "vec3 normalz = normalize(cross(normal, vec3(0,1,0)));\n"
+        // "vec3 normaly = normalize(cross(normal, normalz));\n"
+        // "vec3 wtexnorm = normalz * texnorm.x;\n"
+        // "wtexnorm += normaly * texnorm.y;\n"
+        // "wtexnorm += normal * texnorm.z;\n"
+        // "if(dot(normal, wtexnorm) < 0.0){texnorm *= -1.0;}\n"
+
         "vec3 diffuseColor = texture2D(diffuse_map, vtc).rgb;\n"
         "vec3 specColor = texture2D(specular_map, vtc).rgb;\n"
         "specColor *= normal * 0.6;\n" // iridescence
@@ -764,6 +841,12 @@ GLint  shdFullbright_projection;
 GLint  shdFullbright_modelview;
 GLint  shdFullbright_color;
 GLint  shdFullbright_opacity;
+GLuint shdFullbright1;
+GLint  shdFullbright1_position;
+GLint  shdFullbright1_projection;
+GLint  shdFullbright1_modelview;
+GLint  shdFullbright1_color;
+GLint  shdFullbright1_opacity;
 GLuint shdLambert;
 GLint  shdLambert_position;
 GLint  shdLambert_projection;
@@ -897,6 +980,29 @@ void makeFullbright()
     shdFullbright_opacity    = glGetUniformLocation(shdFullbright, "opacity");
 }
 
+void makeFullbright1()
+{
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &v01, NULL);
+    glCompileShader(vertexShader);
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &f01, NULL);
+    glCompileShader(fragmentShader);
+
+    shdFullbright1 = glCreateProgram();
+        glAttachShader(shdFullbright1, vertexShader);
+        glAttachShader(shdFullbright1, fragmentShader);
+    glLinkProgram(shdFullbright1);
+
+    shdFullbright1_position   = glGetAttribLocation(shdFullbright1,  "position");
+    shdFullbright1_color      = glGetAttribLocation(shdFullbright1,  "color");
+
+    shdFullbright1_projection = glGetUniformLocation(shdFullbright1, "projection");
+    shdFullbright1_modelview  = glGetUniformLocation(shdFullbright1, "modelview");
+    shdFullbright1_opacity    = glGetUniformLocation(shdFullbright1, "opacity");
+}
+
 void makeLambert()
 {
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -1009,6 +1115,9 @@ void makeLambert4()
         glAttachShader(shdLambert4, vertexShader);
         glAttachShader(shdLambert4, fragmentShader);
     glLinkProgram(shdLambert4);
+
+    // debug
+    if(debugShader(shdLambert4) == GL_FALSE){return;}
 
     shdLambert4_position   = glGetAttribLocation(shdLambert4,  "position");
     shdLambert4_normal     = glGetAttribLocation(shdLambert4,  "normal");
@@ -1160,6 +1269,7 @@ void makeAllShaders()
 {
     makeFullbrightT();
     makeFullbright();
+    makeFullbright1();
     makeLambert();
     makeLambert1();
     makeLambert2();
@@ -1190,6 +1300,16 @@ void shadeFullbright(GLint* position, GLint* projection, GLint* modelview, GLint
     *color = shdFullbright_color;
     *opacity = shdFullbright_opacity;
     glUseProgram(shdFullbright);
+}
+
+void shadeFullbright1(GLint* position, GLint* projection, GLint* modelview, GLint* color, GLint* opacity)
+{
+    *position = shdFullbright1_position;
+    *projection = shdFullbright1_projection;
+    *modelview = shdFullbright1_modelview;
+    *color = shdFullbright1_color;
+    *opacity = shdFullbright1_opacity;
+    glUseProgram(shdFullbright1);
 }
 
 void shadeLambert(GLint* position, GLint* projection, GLint* modelview, GLint* lightpos, GLint* color, GLint* opacity)

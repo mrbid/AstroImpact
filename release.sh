@@ -1,2 +1,2 @@
 make clean
-make release generic=true -j`nproc`
+make release -j`nproc` native=false

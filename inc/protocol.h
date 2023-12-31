@@ -1,3 +1,5 @@
+#pragma once
+
 #include <endian.h>
 #include <stdint.h>
 
@@ -23,6 +25,14 @@
 	#define BE16TOH be16toh
 	#define BE32TOH be32toh
 	#define BE64TOH be64toh
+
+	static inline uint32_t HTOLE32F(f32 x) {
+		return *((uint32_t*)(&x));
+	}
+
+	static inline f32 LE32FTOH(uint32_t x) {
+		return *((f32*)(&x));
+	}
 #elif defined(__BYTE_ORDER) && __BYTE_ORDER == __BIG_ENDIAN
 	#define SERVER_PORT 0x1F96
 	#define PROTOCOL_ID 0x440CE1773607F675
@@ -42,6 +52,16 @@
 	#define BE16TOH // no betoh*
 	#define BE32TOH
 	#define BE64TOH
+
+	static inline uint32_t HTOLE32F(f32 x) {
+		uint32_t y = *((uint32_t*)(&x));
+		return HTOLE32(y);
+	}
+
+	static inline f32 LE32FTOH(uint32_t x) {
+		x = LE32TOH(x);
+		return *((f32*)(&x));
+	}
 #else
 	#define SERVER_PORT htobe16(0x1F96)
 	#define PROTOCOL_ID htole64(0x75F6073677E10C44)
@@ -61,13 +81,20 @@
 	#define BE16TOH be16toh
 	#define BE32TOH be32toh
 	#define BE64TOH be64toh
+
+	static inline uint32_t HTOLE32F(f32 x) {
+		uint32_t y = *((uint32_t*)(&x));
+		return HTOLE32(y);
+	}
+
+	static inline f32 LE32FTOH(uint32_t x) {
+		x = LE32TOH(x);
+		return *((f32*)(&x));
+	}
 #endif
 
 //uint32_t HTOLE32F(f32 f);
 //f32 LE32FTOH(uint32_t i);
-#define HTOLE32F
-#define LE32FTOH
-
 #define MSG_TYPE_ASTEROID_POS (uint8_t) 0x00
 
 #define MSG_TYPE_PLAYER_POS (uint8_t) 0x01
@@ -82,6 +109,12 @@
 
 #define MSG_TYPE_PLAYER_DISCONNECTED (uint8_t) 0x05
 
+#define MSG_TYPE_POD_STATE_CHANGED (uint8_t) 0x06
+#define POD_STATE_DESTROYED 0
+#define POD_STATE_SPAWNED 1
+#define POD_STATE_DELIVERED 2
+#define POD_STATE_PICKEDUP 3
+
 
 #define MSG_TYPE_EXO_HIT_RECVD (uint8_t) 0x80
 
@@ -89,9 +122,15 @@
 
 #define MSG_TYPE_PLAYER_DISCONNECTED_RECVD (uint8_t) 0x82
 
+#define MSG_TYPE_POD_STATE_CHANGED_RECVD (uint8_t) 0x83
+
 
 #define MSG_TYPE_REGISTER_ACCEPTED (uint8_t) 0xC0
 
 #define MSG_TYPE_BAD_REGISTER_VALUE (uint8_t) 0xFE
 
 #define MSG_TYPE_REGISTER (uint8_t) 0xFF
+
+
+
+#define MAX_PODS_PER_PLAYER 6

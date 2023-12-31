@@ -1,17 +1,76 @@
-# FractalAttackOnline
-### Defend the planet until it reaches 100% damage!
+# AstroImpact
+### Save the martians from their home planet before annihilation!
+#### *Kinda.. More like save the planet from inevitable annihilation!*
+##### *ok ok ok ... more like ... slow down planet annihilation :'(*
 
-This is a highly engineered version of Fractal Attack for online play.
+### **FlatHub:** https://flathub.org/apps/com.voxdsp.AstroImpact
 
-Work In Progress (WIP)
+### **Official Website:** [AstroImpact.net](https://AstroImpact.net)
+### **Video:** [Vimeo.com](https://vimeo.com/836414581)
 
-### Active Git
-https://notabug.org/AstroImpact/AstroImpact
+~~Work In Progress (WIP)~~
+**Completed.** *We have left some code for "pods" dormant [[assets here]](assets/old_assets.c) and code in the [[pre_declutter_main]](https://notabug.org/AstroImpact/AstroImpact/src/pre_declutter_main) branch, it was going to be a feature that little escape pods pop out of the planet and that you could pick them up and drop them at a safe zone to evacuate the planet, but we have little interest investing time in that direction now.*
 
-### Snapcraft Store
-https://snapcraft.io/fractalattackonline2
+![Screenshot of the AstroImpact game](https://us.v-cdn.net/6030874/uploads/editor/aa/ubn8tqbf6irz.png)
+
+## How do you play it then?
+
+Well you have to fly around in your UFO, preferably with friends, crashing into approaching asteroids to stop them from hitting the planet surface.
+
+* **First Tier:** The longer you can prevent the first hit on the planet.
+* **Second Tier:** The longer you can prevent the planet from being annihilated!
+* **Third Tier:** How many asteroids did you and your friends collectively destroy?
+
+Just make sure you all start on the same epoch! The first person to create the epoch sets the number of approaching asteroids in each wave.
+
+## Make/Compile
+**Standalone Binary**
+```
+sudo apt install libglfw3 libglfw3-dev
+git clone https://notabug.org/AstroImpact/AstroImpact
+cd AstroImpact
+make
+./bin/fat
+```
+**Installer (.deb)**
+```
+sudo apt install libglfw3 libglfw3-dev
+git clone https://notabug.org/AstroImpact/AstroImpact
+cd AstroImpact
+make deb
+sudo dpkg -i bin/fat.deb
+```
+
+## Key/Mouse Mappings
+- Use W,A,S,D,Q,E,SPACE & LEFT SHIFT to move around.
+- L-CTRL / Right Click to Brake.
+- L-ALT / Mouse 3/4 Click to Instant Brake.
+- R = Toggle auto-tilt/roll around planet.
+- Q+E to stop rolling.
+- Escape / Left Click to free mouse focus.
+- F = FPS to console.
+
+## Config File
+`(fat.cfg) or (.config/fat.cfg) or (~/.config/fat.cfg)`
+```
+NUM_ASTEROIDS 1337
+MSAA 16
+AUTOROLL 1
+CENTER_WINDOW 1
+CONTROLS 0
+LOOKSENS 10
+ROLLSENS 10
+```
+The CONTROLS setting in the config file allows you to swap between roll and yaw for mouse x:l=>r.
+
+## Links
+- https://notabug.org/AstroImpact/AstroImpact
+- https://forum.linuxfoundation.org/discussion/862942/astroimpact-the-foss-space-game
+- http://astroimpact.net
 
 ## Attributions
+
+Any assets not attributed here have been created specifically for this project, any assets made for this project automatically share the same license as the project itself. Some textures have been generated using [Stable Diffusion](https://en.wikipedia.org/wiki/Stable_Diffusion).
 
 #### Planet
 https://www.solarsystemscope.com/textures/

@@ -1,6 +1,11 @@
 #include <stddef.h>
 
-#include "../inc/gl.h"
+#ifndef __EMSCRIPTEN__
+    #include "../inc/gl.h"
+#else
+    #include <SDL.h>
+    #include <SDL_opengles2.h>
+#endif
 
 #ifndef models_H
 #define models_H
@@ -29,13 +34,6 @@ extern const size_t ncube_indices_size;
 
 extern GLfloat inner_colors[];
 extern const size_t inner_colors_size;
-
-extern const GLfloat low_vertices[];
-extern const GLushort low_indices[];
-extern const GLsizeiptr low_numind;
-extern const GLsizeiptr low_numvert;
-extern const size_t low_vertices_size;
-extern const size_t low_indices_size;
 
 extern const GLfloat rock8_vertices[];
 extern const GLfloat rock8_normals[];
@@ -138,7 +136,7 @@ extern const size_t beam_indices_size;
 
 extern GLfloat ufo_vertices[];
 extern const GLfloat ufo_normals[];
-extern GLfloat ufo_uvmap[];
+extern GLfloat ufo_uvmap[]; // needs flipping with flipUV()
 extern const GLushort ufo_indices[];
 extern const GLsizeiptr ufo_numind;
 extern const GLsizeiptr ufo_numvert;
@@ -147,30 +145,12 @@ extern const size_t ufo_normals_size;
 extern const size_t ufo_uvmap_size;
 extern const size_t ufo_indices_size;
 
-// extern GLfloat ufo_damaged_vertices[];
-// extern const GLfloat ufo_damaged_normals[];
-// extern GLfloat ufo_damaged_uvmap[];
-// extern const GLushort ufo_damaged_indices[];
-// extern const GLsizeiptr ufo_damaged_numind;
-// extern const GLsizeiptr ufo_damaged_numvert;
-// extern const size_t ufo_damaged_vertices_size;
-// extern const size_t ufo_damaged_normals_size;
-// extern const size_t ufo_damaged_uvmap_size;
-// extern const size_t ufo_damaged_indices_size;
-
 extern GLfloat ufo_lights_vertices[];
 extern const GLubyte ufo_lights_indices[];
 extern const GLsizeiptr ufo_lights_numvert;
 extern const GLsizeiptr ufo_lights_numind;
 extern const size_t ufo_lights_vertices_size;
 extern const size_t ufo_lights_indices_size;
-
-extern GLfloat ufo_tri_vertices[];
-extern const GLubyte ufo_tri_indices[];
-extern const GLsizeiptr ufo_tri_numvert;
-extern const GLsizeiptr ufo_tri_numind;
-extern const size_t ufo_tri_vertices_size;
-extern const size_t ufo_tri_indices_size;
 
 extern GLfloat ufo_shield_vertices[];
 extern const GLushort ufo_shield_indices[];
@@ -180,6 +160,15 @@ extern const GLsizeiptr ufo_shield_numind;
 extern const size_t ufo_shield_vertices_size;
 extern const size_t ufo_shield_indices_size;
 extern const size_t ufo_shield_colors_size;
+
+extern GLfloat ufo_interior_vertices[];
+extern const GLubyte ufo_interior_indices[];
+extern const GLfloat ufo_interior_colors[];
+extern const GLsizeiptr ufo_interior_numvert;
+extern const GLsizeiptr ufo_interior_numind;
+extern const size_t ufo_interior_vertices_size;
+extern const size_t ufo_interior_indices_size;
+extern const size_t ufo_interior_colors_size;
 
 #endif
 #endif

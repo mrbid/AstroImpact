@@ -1,6 +1,6 @@
 /*
     James William Fletcher (github.com/mrbid)
-        November 2022
+        November 2022 - May 2023
 
     To reduce file size the icosphere could be
     generated on program execution by subdividing
@@ -10,10 +10,6 @@
     
     Get current epoch: date +%s
     Start online game: ./fat <future epoch time> <msaa>
-
-    !! should be rendering exploded last due to opacity,
-        and in a seperate array to prevent sorting and
-        then painters algo the regular comets array.
 
     !! I used to be keen on f32 but I tend to use float
     more now just because it's easier to type. I am still
@@ -36,6 +32,7 @@
 #include <sys/time.h>
 #include <sys/file.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include <errno.h>
 
@@ -43,6 +40,9 @@
 //#define IGNORE_OLD_PACKETS
 //#define DEBUG_GL
 //#define FAST_START
+//#define FAKE_PLAYER
+//#define SUN_GOD
+#define ENABLE_PLAYER_PREDICTION
 
 #pragma GCC diagnostic ignored "-Wunused-result"
 
@@ -63,10 +63,7 @@
 
 #include "inc/res.h"
 #include "assets/models.h"
-#include "assets/images1.h"
-#include "assets/images2.h"
-#include "assets/images3.h"
-#include "assets/images4.h"
+#include "assets/images.h"
 
 //*************************************
 // globals
@@ -74,6 +71,8 @@
 GLFWwindow* window;
 uint winw = 1024;
 uint winh = 768;
+uint center = 1;
+int msaa = 16;
 double t = 0;   // time
 f32 dt = 0;     // delta time
 double fc = 0;  // frame count
@@ -81,7 +80,7 @@ double lfct = 0;// last frame count time
 f32 aspect;
 double rww, ww, rwh, wh, ww2, wh2;
 double uw, uh, uw2, uh2; // normalised pixel dpi
-double x,y;
+double x,y,lx,ly;
 
 // render state id's
 GLint projection_id = -1;
@@ -89,7 +88,6 @@ GLint modelview_id;
 GLint normalmat_id = -1;
 GLint position_id;
 GLint lightpos_id;
-GLint solidcolor_id;
 GLint color_id;
 GLint opacity_id;
 GLint normal_id;
@@ -107,25 +105,23 @@ mat modelview;
 // models
 ESModel mdlMenger;
 ESModel mdlExo;
-ESModel mdlInner;
 ESModel mdlRock[9];
-ESModel mdlLow;
 
 ESModel mdlUfo;
-// ESModel mdlUfoDamaged;
 ESModel mdlUfoBeam;
-ESModel mdlUfoTri;
 ESModel mdlUfoLights;
 ESModel mdlUfoShield;
+ESModel mdlUfoInterior;
 
 // textures
-GLuint tex[17];
+GLuint tex[18];
 
 // camera vars
 #define FAR_DISTANCE 10000.f
 vec lightpos = {0.f, 0.f, 0.f};
 uint focus_cursor = 0;
-double sens = 0.001;
+f32 sens = 0.001f;
+f32 rollsens = 0.001f;
 
 // game vars
 #define GFX_SCALE 0.01f
@@ -144,14 +140,13 @@ uint popped = 0;
 f32 damage = 0;
 f32 sun_pos = 0.f;
 time_t sepoch = 0;
+int lgdonce = 0;
 uint te[2] = {0};
 uint8_t killgame = 0;
 pthread_t tid[2];
 uint autoroll = 1;
-uint ufoind = 0;
-f32 ufosht = 0.f;
-f32 ufospt = 0.f;
-f32 ufonxw = 0.f;
+f32 sunsht = 0.f;
+uint controls = 0;
 
 typedef struct
 {
@@ -159,10 +154,12 @@ typedef struct
     f32 rot, newrot, scale, newscale, is_boom;
 } comet;
 
-float players[MAX_PLAYERS*3] = {0};
-float pvel[MAX_PLAYERS*3] = {0};
+f32 players[MAX_PLAYERS*3] = {0};
+f32 pvel[MAX_PLAYERS*3] = {0};
+f32 pfront[MAX_PLAYERS*3] = {0};
+f32 pup[MAX_PLAYERS*3] = {0};
 comet comets[MAX_COMETS] = {0};
-unsigned char exohit[655362] = {0}; // 0.65 MB
+f32 exohit[655362] = {0}; // 0.65 MB * 4 = 2.6 MB
 
 // networking
 #define UDP_PORT 8086
@@ -174,11 +171,138 @@ int ssock = -1;
 struct sockaddr_in server;
 uint8_t myid = 0;
 uint64_t latest_packet = 0;
+f32 rncr = 0.f; // reciprocal number comet render
 _Atomic uint64_t last_render_time = 0;
 
 //*************************************
 // utility functions
 //*************************************
+#define isequal(str, len, compared_to_str) len == sizeof(compared_to_str) - 1 && memcmp(str, compared_to_str, len) == 0
+void loadConfig()
+{
+    const char* home = getenv("HOME");
+    int fd;
+    if(home == NULL)
+    {
+        fd = open(".config/fat.cfg", O_RDONLY);
+    }
+    else
+    {
+        char fp[strlen(home)+32];
+        sprintf(fp, "%s/.config/fat.cfg", home);
+        fd = open(fp, O_RDONLY);
+    }
+    if(fd < 0)
+    {
+        fd = open("fat.cfg", O_RDONLY);
+        if(fd < 0){return;}
+    }
+    puts("!! fat.cfg detected (argv parameters will override the config)");
+    off_t len = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    char data[len+1];
+    size_t len_read = read(fd, data, len);
+    data[len] = 0;
+    int offset = 0;
+    int wasroll = 0;
+    while(offset < len){
+        int paramlen;
+        int linelen;
+        int val;
+        if(sscanf(data+offset, "%*s%n %i%n", &paramlen, &val, &linelen) != 1){break;}
+             if(isequal(data+offset, paramlen, "NUM_ASTEROIDS")){NUM_COMETS = val;}
+        else if(isequal(data+offset, paramlen, "MSAA")){msaa = val;}
+        else if(isequal(data+offset, paramlen, "AUTOROLL")){autoroll = val;}
+        else if(isequal(data+offset, paramlen, "CENTER_WINDOW")){center = val;}
+        else if(isequal(data+offset, paramlen, "CONTROLS")){controls = val;}
+        else if(isequal(data+offset, paramlen, "LOOKSENS")){sens = 0.0001f*(f32)val;}
+        else if(isequal(data+offset, paramlen, "ROLLSENS")){rollsens = 0.0001f*(f32)val; wasroll=1;}
+        offset += linelen;
+        while(data[offset] && data[offset] != '\n'){offset++;}
+        offset++;
+    }
+    close(fd);
+    if(wasroll == 0){rollsens = sens;}
+}
+
+#ifdef VERBOSE
+void dumpComet(const uint id)
+{
+    printf("%g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g\n",
+        comets[id].pos.x,
+        comets[id].pos.y,
+        comets[id].pos.z,
+        comets[id].vel.x,
+        comets[id].vel.y,
+        comets[id].vel.z,
+        comets[id].newpos.x,
+        comets[id].newpos.y,
+        comets[id].newpos.z,
+        comets[id].newvel.x,
+        comets[id].newvel.y,
+        comets[id].newvel.z,
+        comets[id].rot,
+        comets[id].newrot,
+        comets[id].scale,
+        comets[id].newscale);
+}
+
+void dumpZeroComets()
+{
+    for(uint16_t i = 0; i < NUM_COMETS; i++)
+    {
+        if(comets[i].pos.x == 0 && comets[i].pos.y == 0 && comets[i].pos.z == 0)
+        {
+            printf("[%u] %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g\n",
+                i,
+                comets[i].pos.x,
+                comets[i].pos.y,
+                comets[i].pos.z,
+                comets[i].vel.x,
+                comets[i].vel.y,
+                comets[i].vel.z,
+                comets[i].newpos.x,
+                comets[i].newpos.y,
+                comets[i].newpos.z,
+                comets[i].newvel.x,
+                comets[i].newvel.y,
+                comets[i].newvel.z,
+                comets[i].rot,
+                comets[i].newrot,
+                comets[i].scale,
+                comets[i].newscale);
+        }
+    }
+    printf("----\n");
+}
+
+void dumpComets()
+{
+    for(uint16_t i = 0; i < NUM_COMETS; i++)
+    {
+        printf("[%u] %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+            i,
+            comets[i].pos.x,
+            comets[i].pos.y,
+            comets[i].pos.z,
+            comets[i].vel.x,
+            comets[i].vel.y,
+            comets[i].vel.z,
+            comets[i].newpos.x,
+            comets[i].newpos.y,
+            comets[i].newpos.z,
+            comets[i].newvel.x,
+            comets[i].newvel.y,
+            comets[i].newvel.z,
+            comets[i].rot,
+            comets[i].newrot,
+            comets[i].scale,
+            comets[i].newscale);
+    }
+    printf("----\n");
+}
+#endif
+
 void timestamp(char* ts)
 {
     const time_t tt = time(0);
@@ -192,25 +316,45 @@ uint64_t microtime()
     gettimeofday(&tv, &tz);
     return 1000000 * tv.tv_sec + tv.tv_usec;
 }
+int urand_int()
+{
+    int f = open("/dev/urandom", O_RDONLY | O_CLOEXEC), s;
+    read(f, &s, sizeof(int));
+    close(f);
+    return s;
+}
 f32 microtimeToScalar(const uint64_t timestamp)
 {
-    return (float)(int64_t)(last_render_time-timestamp) * 0.000001f;
+    if(last_render_time == 0){last_render_time = microtime();}
+    return (f32)(int64_t)(last_render_time-timestamp) * 0.000001f;
 }
-void scaleBuffer(GLfloat* b, GLsizeiptr s)
+void scaleBuffer(f32* b, GLsizeiptr s)
 {
     for(GLsizeiptr i = 0; i < s; i++)
         b[i] *= GFX_SCALE;
 }
-void flipUV(GLfloat* b, GLsizeiptr s)
+void scaleBufferC(f32* b, GLsizeiptr s, const f32 scale)
+{
+    for(GLsizeiptr i = 0; i < s; i++)
+    {
+        b[i] *= scale;
+        b[i] *= -1.f;
+    }
+}
+void flipUV(f32* b, GLsizeiptr s)
 {
     for(GLsizeiptr i = 1; i < s; i+=2)
         b[i] *= -1.f;
 }
-void doExoImpact(vec p, float f)
+void killGame()
+{
+    damage = 1337.f; // this trips the threads into exiting and flipping `killgame = 1`
+}
+void doExoImpact(vec p, f32 f)
 {
     for(GLsizeiptr h = 0; h < exo_numvert; h++)
     {
-        if(exohit[h] == 1){continue;}
+        if(exohit[h] == 0.03f){continue;}
         const GLsizeiptr i = h*3;
         vec v = {exo_vertices[i], exo_vertices[i+1], exo_vertices[i+2]};
         f32 ds = vDistSq(v, p);
@@ -218,15 +362,25 @@ void doExoImpact(vec p, float f)
         {
             ds = vDist(v, p);
             vNorm(&v);
-            const f32 sr = f-ds;
+            f32 sr = f-ds;
+            if(exohit[h]+sr > 0.03f){sr -= (exohit[h]+sr)-0.03f;}
             vMulS(&v, v, sr);
-            if(sr > 0.03f){exohit[h] = 1;}
             exo_vertices[i]   -= v.x;
             exo_vertices[i+1] -= v.y;
             exo_vertices[i+2] -= v.z;
-            exo_colors[i]   -= 0.2f;
-            exo_colors[i+1] -= 0.2f;
-            exo_colors[i+2] -= 0.2f;
+            exohit[h] += sr;
+            if(exohit[h] == 0.03f)
+            {
+                exo_colors[i]   = inner_colors[i];
+                exo_colors[i+1] = inner_colors[i+1];
+                exo_colors[i+2] = inner_colors[i+2];
+            }
+            else
+            {
+                exo_colors[i]   -= 0.2f;
+                exo_colors[i+1] -= 0.2f;
+                exo_colors[i+2] -= 0.2f;
+            }
         }
     }
     esRebind(GL_ARRAY_BUFFER, &mdlExo.vid, exo_vertices, exo_vertices_size, GL_STATIC_DRAW);
@@ -236,26 +390,26 @@ void incrementHits()
 {
     hits++;
     char title[256];
-    sprintf(title, "Online Fractal Attack | %u/%u | %.2f%% | %.2f mins", hits, popped, 100.f*damage, (time(0)-sepoch)/60.0);
+    sprintf(title, "AstroImpact | %u/%u | %.2f%% | %.2f mins", hits, popped, 100.f*damage, (time(0)-sepoch)/60.0);
     glfwSetWindowTitle(window, title);
     if(damage > 10.f)
     {
         killgame = 1;
-        sprintf(title, "Online Fractal Attack | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
+        sprintf(title, "AstroImpact | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
         glfwSetWindowTitle(window, title);
     }
 }
 
 
 //*************************************
-// networking functions
+// networking utility functions
 //*************************************
 // void dumpPacket(const char* buff, const size_t rs)
 // {
-//     FILE* f = fopen("packet.dat", "w");
+//     FILE* f = fopen("packet.dat", "wb");
 //     if(f != NULL)
 //     {
-//         fwrite(&buff, rs, 1, f);
+//         fwrite(buff, rs, 1, f);
 //         fclose(f);
 //     }
 //     exit(EXIT_SUCCESS);
@@ -286,17 +440,20 @@ int csend(const unsigned char* data, const size_t len)
     return 0;
 }
 
+//*************************************
+// network send thread
+//*************************************
 void *sendThread(void *arg)
 {
     // dont send until 1 second before game start
     //sleep(time(0)-sepoch-1);
 
     // send position on interval until end game
-    const size_t packet_len = 41;
+    const size_t packet_len = 65;
     unsigned char packet[packet_len];
     memcpy(&packet, &pid, sizeof(uint64_t));
     memcpy(&packet[8], &(uint8_t){MSG_TYPE_PLAYER_POS}, sizeof(uint8_t));
-    const size_t poslen = sizeof(float)*3;
+    const size_t poslen = sizeof(f32)*3;
     const useconds_t st = 50000;
     useconds_t cst = st;
     const uint retries = 3;
@@ -310,7 +467,7 @@ void *sendThread(void *arg)
         {
             killgame = 1;
             char title[256];
-            sprintf(title, "Online Fractal Attack | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
+            sprintf(title, "AstroImpact | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
             glfwSetWindowTitle(window, title);
             printf("sendThread: exiting, game over.\n");
             break;
@@ -321,10 +478,12 @@ void *sendThread(void *arg)
 
         // send position
         cst = 0;
-        const uint64_t mt = microtime();
+        const uint64_t mt = HTOLE64(microtime());
         memcpy(&packet[9], &mt, sizeof(uint64_t));
-        memcpy(&packet[17], &ppr, poslen);
-        memcpy(&packet[29], &pp, poslen);
+        memcpy(&packet[17], &(uint32_t[]){HTOLE32F(ppr.x), HTOLE32F(ppr.y), HTOLE32F(ppr.z)}, poslen);
+        memcpy(&packet[29], &(uint32_t[]){HTOLE32F(pp.x), HTOLE32F(pp.y), HTOLE32F(pp.z)}, poslen);
+        memcpy(&packet[41], &(uint32_t[]){HTOLE32F(-view.m[0][2]), HTOLE32F(-view.m[1][2]), HTOLE32F(-view.m[2][2])}, poslen);
+        memcpy(&packet[53], &(uint32_t[]){HTOLE32F(-view.m[0][1]), HTOLE32F(-view.m[1][1]), HTOLE32F(-view.m[2][1])}, poslen);
         uint retry = 0;
         while(sendto(ssock, packet, packet_len, 0, (struct sockaddr*)&server, sizeof(server)) < 0)
         {
@@ -342,6 +501,10 @@ void *sendThread(void *arg)
     }
 }
 
+//*************************************
+// network recv thread
+//*************************************
+void window_size_callback(GLFWwindow* window, int width, int height);
 void *recvThread(void *arg)
 {
     uint slen = sizeof(server);
@@ -349,31 +512,91 @@ void *recvThread(void *arg)
     te[1] = 1;
     while(1)
     {
+//*************************************
+// INIT / CONTROL
+//*************************************
         // kill (game over)
         if(damage == 1337.f){break;}
         else if(damage > 10.f)
         {
             killgame = 1;
             char title[256];
-            sprintf(title, "Online Fractal Attack | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
+            sprintf(title, "AstroImpact | %u/%u | 100%% | %.2f mins | GAME END", hits, popped, (time(0)-sepoch)/60.0);
             glfwSetWindowTitle(window, title);
             printf("recvThread: exiting, game over.\n");
             break;
         }
 
+        // loading game
+        static time_t lgnt = 0;
+        if(lgdonce == 0 && time(0) < sepoch && lgnt != sepoch-time(0))
+        {
+            char title[256];
+            uint wp = 0;
+            for(uint i = 0; i < MAX_PLAYERS; i++)
+            {
+                const uint j = i*3;
+                if(players[j] != 0.f || players[j+1] != 0.f || players[j+2] != 0.f)
+                    wp++;
+            }
+            const time_t tleft = sepoch-time(0);
+            sprintf(title, "Please wait... %lu seconds. Total players waiting %u.", tleft, wp+1);
+            glfwSetWindowTitle(window, title);
+
+            // allow early exit
+            glfwPollEvents();
+            if(glfwWindowShouldClose(window))
+            {
+                // send disconnect message
+                for(int i = 0; i < 3; i++)
+                {
+                    unsigned char packet[9];
+                    memcpy(&packet, &pid, sizeof(uint64_t));
+                    memcpy(&packet[8], &(uint8_t){MSG_TYPE_PLAYER_DISCONNECTED}, sizeof(uint8_t));
+                    csend(packet, 9);
+                    usleep(100000);
+                }
+                glfwDestroyWindow(window);
+                glfwTerminate();
+                exit(EXIT_SUCCESS);
+            }
+
+            lgnt = tleft;
+        }
+        else if(lgdonce == 0 && time(0) >= sepoch)
+        {
+            glfwSetWindowTitle(window, "AstroImpact");
+            glfwSetWindowAttrib(window, GLFW_RESIZABLE, GLFW_TRUE);
+            lgdonce = 1;
+        }
+
         // wait for packet
         memset(buff, 0x00, sizeof(buff));
-        const ssize_t rs = recvfrom(ssock, buff, RECV_BUFF_SIZE-1, 0, (struct sockaddr *)&server, &slen);
+        const ssize_t rs = recvfrom(ssock, buff, RECV_BUFF_SIZE, 0, (struct sockaddr *)&server, &slen);
         if(rs < 9){continue;} // must have pid + id minimum
+        if(memcmp(&buff[0], &pid, sizeof(uint64_t)) != 0){continue;} // invalid protocol id?
 
+#ifdef VERBOSE
+        // debug protocol
+        uint64_t rpid = 0;
+        uint8_t rpacid = 0;
+        memcpy(&rpid, &buff[0], sizeof(uint64_t));
+        memcpy(&rpacid, &buff[8], sizeof(uint8_t));
+        printf("PACKET: (PID) 0x%lX / (ID) 0x%.02X\n", rpid, rpacid);
+#endif
+
+//*************************************
+// MSG_TYPE_ASTEROID_POS
+//*************************************
         if(buff[8] == MSG_TYPE_ASTEROID_POS) // asteroid pos
         {
-            static const size_t ps = sizeof(uint16_t)+(sizeof(float)*8);
+            static const size_t ps = sizeof(uint16_t)+(sizeof(uint32_t)*8);
             size_t ofs = sizeof(uint64_t)+sizeof(uint8_t);
             uint64_t timestamp = 0;
             if(rs > sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t))
             {
                 memcpy(&timestamp, &buff[ofs], sizeof(uint64_t));
+                timestamp = LE64TOH(timestamp);
                 ofs += sizeof(uint64_t);
 #ifdef IGNORE_OLD_PACKETS
                 if(timestamp >= latest_packet) // skip this packet if it is not new
@@ -386,40 +609,83 @@ void *recvThread(void *arg)
             {
                 uint16_t id;
                 memcpy(&id, &buff[ofs], sizeof(uint16_t));
+                id = LE16TOH(id);
+
+                if(id >= MAX_COMETS){continue;}
+                ofs += sizeof(uint16_t);
+
+                uint32_t tmp[3];
                 if(comets[id].is_boom > 0.f) // nonono ! im animating!
                 {
-                    ofs += ps;
+                    memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                    comets[id].newvel.x = LE32FTOH(tmp[0]);
+                    comets[id].newvel.y = LE32FTOH(tmp[1]);
+                    comets[id].newvel.z = LE32FTOH(tmp[2]);
+                    ofs += sizeof(uint32_t)*3;
+                    
+                    memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                    comets[id].newpos.x = LE32FTOH(tmp[0]);
+                    comets[id].newpos.y = LE32FTOH(tmp[1]);
+                    comets[id].newpos.z = LE32FTOH(tmp[2]);
+                    ofs += sizeof(uint32_t)*3;
+
+                    memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                    comets[id].newrot = LE32FTOH(tmp[0]);
+                    ofs += sizeof(uint32_t);
+
+                    memcpy(&comets[id].newscale, &buff[ofs], sizeof(uint32_t));
+                    comets[id].newscale = LE32FTOH(tmp[0]);
+                    ofs += sizeof(uint32_t);
+
                     continue;
                 }
-                ofs += sizeof(uint16_t);
-                memcpy(&comets[id].vel, &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&comets[id].pos, &buff[ofs], sizeof(float)*3);
 
-                // timestamp correction
-                const f32 s = microtimeToScalar(timestamp);
-                vec c = comets[id].vel;
-                vMulS(&c, c, s);
-                vAdd(&comets[id].pos, comets[id].pos, c);
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[id].vel.x = LE32FTOH(tmp[0]);
+                comets[id].vel.y = LE32FTOH(tmp[1]);
+                comets[id].vel.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
 
-                ofs += sizeof(float)*3;
-                memcpy(&comets[id].rot, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
-                memcpy(&comets[id].scale, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[id].pos.x = LE32FTOH(tmp[0]);
+                comets[id].pos.y = LE32FTOH(tmp[1]);
+                comets[id].pos.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                // --
+                    // timestamp correction
+                    const f32 s = microtimeToScalar(timestamp);
+                    vec c = comets[id].vel;
+                    vMulS(&c, c, s);
+                    vAdd(&comets[id].pos, comets[id].pos, c);
+                // --
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[id].rot = LE32FTOH(tmp[0]);
+                ofs += sizeof(uint32_t);
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[id].scale = LE32FTOH(tmp[0]);
+                ofs += sizeof(uint32_t);
+
 #ifdef VERBOSE
+                //printf("A[%u]: %+.2f %+.2f %+.2f, %+.2f %+.2f %+.2f, %+.2f %+.2f %+.2f, %+.2f %+.2f %+.2f, %+.2f, %+.2f, %+.2f, %+.2f\n", id, comets[id].pos.x, comets[id].pos.y, comets[id].pos.z, comets[id].vel.x, comets[id].vel.y, comets[id].vel.z, comets[id].newpos.x, comets[id].newpos.y, comets[id].newpos.z, comets[id].newvel.x, comets[id].newvel.y, comets[id].newvel.z, comets[id].rot, comets[id].newrot, comets[id].scale, comets[id].newscale);
                 printf("A[%u]: %+.2f, %+.2f, %+.2f\n", id, comets[id].pos.x, comets[id].pos.y, comets[id].pos.z);
 #endif
             }
         }
+//*************************************
+// MSG_TYPE_PLAYER_POS
+//*************************************
         else if(buff[8] == MSG_TYPE_PLAYER_POS) // player pos
         {
-            static const size_t ps = sizeof(uint8_t)+(sizeof(float)*6);
+            static const size_t ps = sizeof(uint8_t)+(sizeof(uint32_t)*12);
             size_t ofs = sizeof(uint64_t)+sizeof(uint8_t);
             uint64_t timestamp = 0;
             if(rs > sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t))
             {
                 memcpy(&timestamp, &buff[ofs], sizeof(uint64_t));
+                timestamp = LE64TOH(timestamp);
                 ofs += sizeof(uint64_t);
 #ifdef IGNORE_OLD_PACKETS
                 if(timestamp >= latest_packet) // skip this packet if it is not new
@@ -432,19 +698,41 @@ void *recvThread(void *arg)
             {
                 uint8_t id;
                 memcpy(&id, &buff[ofs], sizeof(uint8_t));
-                if(id == myid) // nonono ! that's me!
+                if(id == myid || id >= MAX_PLAYERS) // nonono ! that's me!
                 {
                     ofs += ps;
                     continue;
                 }
-                uint16_t ido = id*3;
                 ofs += sizeof(uint8_t);
-                memcpy(&players[ido], &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&pvel[ido], &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
+                uint32_t tmp[3];
+                uint16_t ido = id*3;
 
-                // timestamp correction (let's see how this works out)
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                players[ido]   = LE32FTOH(tmp[0]);
+                players[ido+1] = LE32FTOH(tmp[1]);
+                players[ido+2] = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                pvel[ido]   = LE32FTOH(tmp[0]);
+                pvel[ido+1] = LE32FTOH(tmp[1]);
+                pvel[ido+2] = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                pfront[ido]   = LE32FTOH(tmp[0]);
+                pfront[ido+1] = LE32FTOH(tmp[1]);
+                pfront[ido+2] = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                pup[ido]   = LE32FTOH(tmp[0]);
+                pup[ido+1] = LE32FTOH(tmp[1]);
+                pup[ido+2] = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+#ifdef ENABLE_PLAYER_PREDICTION
+                // timestamp correction
                 const f32 s = microtimeToScalar(timestamp);
                 vec p = (vec){players[ido], players[ido+1], players[ido+2]};
                 vec v = (vec){pvel[ido], pvel[ido+1], pvel[ido+2]};
@@ -453,28 +741,33 @@ void *recvThread(void *arg)
                 players[ido]   = p.x;
                 players[ido+1] = p.y;
                 players[ido+2] = p.z;
-
-                //if(id == 1){printf("%lu: %+.2f, %+.2f, %+.2f / %+.2f, %+.2f, %+.2f\n", timestamp, players[ido], players[ido+1], players[ido+2], pvel[ido], pvel[ido+1], pvel[ido+2]);}
-
+#endif
 #ifdef VERBOSE
-                printf("P[%u]: %+.2f, %+.2f, %+.2f\n", id, players[ido], players[ido+1], players[ido+2]);
+                printf("P[%u]: %+.2f, %+.2f, %+.2f - %+.2f, %+.2f, %+.2f\n", id, players[ido], players[ido+1], players[ido+2], pvel[ido], pvel[ido+1], pvel[ido+2]);
 #endif
             }
         }
+//*************************************
+// MSG_TYPE_SUN_POS
+//*************************************
         else if(buff[8] == MSG_TYPE_SUN_POS) // sun pos
         {
-            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(float);
+            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(uint32_t);
             if(rs == ps)
             {
                 uint64_t timestamp = 0;
                 memcpy(&timestamp, &buff[sizeof(uint64_t)+sizeof(uint8_t)], sizeof(uint64_t));
+                timestamp = LE64TOH(timestamp);
 #ifdef IGNORE_OLD_PACKETS
                 if(timestamp >= latest_packet) // skip this packet if it is not new
                     latest_packet = timestamp;
                 else
                     continue;
 #endif
-                memcpy(&sun_pos, &buff[sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)], sizeof(float));
+                uint32_t tmp;
+                memcpy(&tmp, &buff[sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)], sizeof(uint32_t));
+                sun_pos = LE32FTOH(tmp);
+
                 // timestamp correction
                 const f32 s = microtimeToScalar(timestamp);
                 sun_pos += 0.03f*s;
@@ -483,15 +776,19 @@ void *recvThread(void *arg)
             printf("S: %+.2f\n", sun_pos);
 #endif
         }
+//*************************************
+// MSG_TYPE_ASTEROID_DESTROYED
+//*************************************
         else if(buff[8] == MSG_TYPE_ASTEROID_DESTROYED) // asteroid destroyed **RELIABLE**
         {
-            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(uint16_t)+(sizeof(float)*8);
+            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(uint16_t)+(sizeof(uint32_t)*8);
             size_t ofs = sizeof(uint64_t)+sizeof(uint8_t);
             if(rs == ps)
             {
                 // read packet
                 uint64_t timestamp = 0;
                 memcpy(&timestamp, &buff[ofs], sizeof(uint64_t));
+                timestamp = LE64TOH(timestamp);
 #ifdef IGNORE_OLD_PACKETS
                 if(timestamp > latest_packet) // skip this packet if it is not new
                     latest_packet = timestamp;
@@ -501,32 +798,48 @@ void *recvThread(void *arg)
                 ofs += sizeof(uint64_t);
                 uint16_t id;
                 memcpy(&id, &buff[ofs], sizeof(uint16_t));
-                if(comets[id].is_boom > 0.f){continue;} // nonono ! im animating!
+                id = LE16TOH(id);
                 ofs += sizeof(uint16_t);
-                memcpy(&comets[id].newvel, &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&comets[id].newpos, &buff[ofs], sizeof(float)*3);
 
-                // timestamp correction
-                const f32 s = microtimeToScalar(timestamp);
-                vec c = comets[id].newvel;
-                vMulS(&c, c, s);
-                vAdd(&comets[id].newpos, comets[id].newpos, c);
+                uint32_t tmp[3];
+                
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[id].newvel.x = LE32FTOH(tmp[0]);
+                comets[id].newvel.y = LE32FTOH(tmp[1]);
+                comets[id].newvel.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
 
-                ofs += sizeof(float)*3;
-                memcpy(&comets[id].newrot, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
-                memcpy(&comets[id].newscale, &buff[ofs], sizeof(float));
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[id].newpos.x = LE32FTOH(tmp[0]);
+                comets[id].newpos.y = LE32FTOH(tmp[1]);
+                comets[id].newpos.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                // --
+                    // timestamp correction
+                    const f32 s = microtimeToScalar(timestamp);
+                    vec c = comets[id].newvel;
+                    vMulS(&c, c, s);
+                    vAdd(&comets[id].newpos, comets[id].newpos, c);
+                // --
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[id].newrot = LE32FTOH(tmp[0]);
+                ofs += sizeof(uint32_t);
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[id].newscale = LE32FTOH(tmp[0]);
 
                 // set asteroid to boom state
 #ifdef VERBOSE
+                //dumpComet(id);
                 printf("[%u] asteroid_destroyed received.\n", id);
 #endif
                 if(comets[id].is_boom == 0.f)
                 {
                     popped++;
                     char title[256];
-                    sprintf(title, "Online Fractal Attack | %u/%u | %.2f%% | %.2f mins", hits, popped, 100.f*damage, (time(0)-sepoch)/60.0);
+                    sprintf(title, "AstroImpact | %u/%u | %.2f%% | %.2f mins", hits, popped, 100.f*damage, (time(0)-sepoch)/60.0);
                     glfwSetWindowTitle(window, title);
                 }
                 comets[id].is_boom = 1.f;
@@ -535,60 +848,119 @@ void *recvThread(void *arg)
                 unsigned char packet[11];
                 memcpy(&packet, &pid, sizeof(uint64_t));
                 memcpy(&packet[8], &(uint8_t){MSG_TYPE_ASTEROID_DESTROYED_RECVD}, sizeof(uint8_t));
+                id = HTOLE16(id);
                 memcpy(&packet[9], &id, sizeof(uint16_t));
                 csend(packet, 11);
             }
         }
+//*************************************
+// MSG_TYPE_EXO_HIT
+//*************************************
         else if(buff[8] == MSG_TYPE_EXO_HIT) // exo hit **RELIABLE**
         {
-            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(uint16_t)+sizeof(uint16_t)+(sizeof(float)*16)+sizeof(float);
+            static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint64_t)+sizeof(uint16_t)+sizeof(uint16_t)+(sizeof(uint32_t)*16)+sizeof(uint32_t);
             size_t ofs = sizeof(uint64_t)+sizeof(uint8_t);
             if(rs == ps)
             {
                 // read packet
                 uint64_t timestamp = 0;
                 memcpy(&timestamp, &buff[ofs], sizeof(uint64_t));
+                timestamp = LE64TOH(timestamp);
+                ofs += sizeof(uint64_t);
 #ifdef IGNORE_OLD_PACKETS
                 if(timestamp >= latest_packet) // skip this packet if it is not new
                     latest_packet = timestamp;
                 else
                     continue;
 #endif
-                ofs += sizeof(uint64_t);
+                
                 uint16_t hit_id, asteroid_id;
                 memcpy(&hit_id, &buff[ofs], sizeof(uint16_t));
+                hit_id = LE16TOH(hit_id);
                 ofs += sizeof(uint16_t);
                 memcpy(&asteroid_id, &buff[ofs], sizeof(uint16_t));
-                if(comets[asteroid_id].is_boom > 0.f){continue;} // nonono ! im animating!
+                asteroid_id = LE16TOH(asteroid_id);
                 ofs += sizeof(uint16_t);
-                memcpy(&comets[asteroid_id].vel, &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&comets[asteroid_id].pos, &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&comets[asteroid_id].newvel, &buff[ofs], sizeof(float)*3);
-                ofs += sizeof(float)*3;
-                memcpy(&comets[asteroid_id].newpos, &buff[ofs], sizeof(float)*3);
+                
+                uint32_t tmp[3];
 
-                // timestamp correction
-                const f32 s = microtimeToScalar(timestamp);
-                vec c = comets[asteroid_id].newvel;
-                vMulS(&c, c, s);
-                vAdd(&comets[asteroid_id].newpos, comets[asteroid_id].newpos, c);
+                if(comets[asteroid_id].is_boom <= 0.f) // animating
+                {
+                    memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                    comets[asteroid_id].vel.x = LE32FTOH(tmp[0]);
+                    comets[asteroid_id].vel.y = LE32FTOH(tmp[1]);
+                    comets[asteroid_id].vel.z = LE32FTOH(tmp[2]);
+                }
+                ofs += sizeof(uint32_t)*3;
 
-                ofs += sizeof(float)*3;
-                memcpy(&comets[asteroid_id].rot, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
-                memcpy(&comets[asteroid_id].scale, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
-                memcpy(&comets[asteroid_id].newrot, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
-                memcpy(&comets[asteroid_id].newscale, &buff[ofs], sizeof(float));
-                ofs += sizeof(float);
+#ifdef VERBOSE // prediction accuracy test
+                const vec op = comets[asteroid_id].pos;
+#endif
+                
+                if(comets[asteroid_id].is_boom <= 0.f) // animating
+                {
+                    memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                    comets[asteroid_id].pos.x = LE32FTOH(tmp[0]);
+                    comets[asteroid_id].pos.y = LE32FTOH(tmp[1]);
+                    comets[asteroid_id].pos.z = LE32FTOH(tmp[2]);
+                }
+                ofs += sizeof(uint32_t)*3;
+
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[asteroid_id].newvel.x = LE32FTOH(tmp[0]);
+                comets[asteroid_id].newvel.y = LE32FTOH(tmp[1]);
+                comets[asteroid_id].newvel.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                memcpy(&tmp, &buff[ofs], sizeof(uint32_t)*3);
+                comets[asteroid_id].newpos.x = LE32FTOH(tmp[0]);
+                comets[asteroid_id].newpos.y = LE32FTOH(tmp[1]);
+                comets[asteroid_id].newpos.z = LE32FTOH(tmp[2]);
+                ofs += sizeof(uint32_t)*3;
+
+                // --
+                    // timestamp correction
+                    const f32 s = microtimeToScalar(timestamp);
+                    vec c = comets[asteroid_id].newvel;
+                    vMulS(&c, c, s);
+                    vAdd(&comets[asteroid_id].newpos, comets[asteroid_id].newpos, c);
+                // --
+
+                if(comets[asteroid_id].is_boom <= 0.f) // animating
+                {
+                    memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                    comets[asteroid_id].rot = LE32FTOH(tmp[0]);
+                }
+                ofs += sizeof(uint32_t);
+
+                if(comets[asteroid_id].is_boom <= 0.f) // animating
+                {
+                    memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                    comets[asteroid_id].scale = LE32FTOH(tmp[0]);
+                }
+                ofs += sizeof(uint32_t);
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[asteroid_id].newrot = LE32FTOH(tmp[0]);
+                ofs += sizeof(uint32_t);
+
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                comets[asteroid_id].newscale = LE32FTOH(tmp[0]);
+                ofs += sizeof(uint32_t);
+
+#ifdef VERBOSE // prediction accuracy test
+                const vec np = comets[asteroid_id].pos;
+                const f32 d = vDist(op, np);
+                if(d > 0.1f){printf("EXO_HIT_DIST: %g\n", vDist(op, np));printf("%g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g\n", op.x, op.y, op.z, comets[asteroid_id].pos.x, comets[asteroid_id].pos.y, comets[asteroid_id].pos.z, comets[asteroid_id].vel.x, comets[asteroid_id].vel.y, comets[asteroid_id].vel.z, comets[asteroid_id].newpos.x, comets[asteroid_id].newpos.y, comets[asteroid_id].newpos.z, comets[asteroid_id].newvel.x, comets[asteroid_id].newvel.y, comets[asteroid_id].newvel.z, comets[asteroid_id].rot, comets[asteroid_id].newrot, comets[asteroid_id].scale, comets[asteroid_id].newscale);}
+#endif
 
                 // kill game?
-                memcpy(&damage, &buff[ofs], sizeof(float));
+                memcpy(&tmp[0], &buff[ofs], sizeof(uint32_t));
+                damage = LE32FTOH(tmp[0]);
 
 #ifdef VERBOSE
+                //dumpComet(asteroid_id);
+
                 if(damage > 10.f)
                 {
                     printf("[%u] exo_hit [END GAME]\n", asteroid_id);
@@ -599,25 +971,32 @@ void *recvThread(void *arg)
                 }
 #endif
 
-                // do impact
-                incrementHits();
+                if(comets[asteroid_id].is_boom <= 0.f) // animating
+                {
+                    // do impact
+                    incrementHits();
 
-                // set asteroid to boom state
-                vec dir = comets[asteroid_id].vel;
-                vNorm(&dir);
-                vec fwd;
-                vMulS(&fwd, dir, 0.03f);
-                vAdd(&comets[asteroid_id].pos, comets[asteroid_id].pos, fwd);
-                comets[asteroid_id].is_boom = 1.f;
+                    // set asteroid to boom state
+                    vec dir = comets[asteroid_id].vel;
+                    vNorm(&dir);
+                    vec fwd;
+                    vMulS(&fwd, dir, 0.03f);
+                    vAdd(&comets[asteroid_id].pos, comets[asteroid_id].pos, fwd);
+                    comets[asteroid_id].is_boom = 1.f;
+                }
 
                 // send confirmation
                 unsigned char packet[11];
                 memcpy(&packet, &pid, sizeof(uint64_t));
                 memcpy(&packet[8], &(uint8_t){MSG_TYPE_EXO_HIT_RECVD}, sizeof(uint8_t));
+                hit_id = HTOLE16(hit_id);
                 memcpy(&packet[9], &hit_id, sizeof(uint16_t));
                 csend(packet, 11);
             }
         }
+//*************************************
+// MSG_TYPE_PLAYER_DISCONNECTED
+//*************************************
         else if(buff[8] == MSG_TYPE_PLAYER_DISCONNECTED) // player disconnect
         {
             static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint8_t);
@@ -631,9 +1010,9 @@ void *recvThread(void *arg)
                 players[ido+1] = 0.f;
                 players[ido+2] = 0.f;
 
-#ifdef VERBOSE
+//#ifdef VERBOSE
                 printf("[%u] player_disconnected\n", id);
-#endif
+//#endif
 
                 // send confirmation
                 unsigned char packet[10];
@@ -641,19 +1020,40 @@ void *recvThread(void *arg)
                 memcpy(&packet[8], &(uint8_t){MSG_TYPE_PLAYER_DISCONNECTED_RECVD}, sizeof(uint8_t));
                 memcpy(&packet[9], &id, sizeof(uint8_t));
                 csend(packet, 10);
+                
+                // if we are the player disconnecting, let's quit!
+                if(id == myid){killGame();}
             }
         }
+//*************************************
+// MSG_TYPE_REGISTER_ACCEPTED
+//*************************************
         else if(buff[8] == MSG_TYPE_REGISTER_ACCEPTED) // registration accepted
         {
             static uint accepted = 0;
             if(accepted == 0)
             {
-                static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint8_t);
-                if(rs == ps){memcpy(&myid, &buff[sizeof(uint64_t)+sizeof(uint8_t)], sizeof(uint8_t));}
-                printf("recvThread: Registration was accepted; id(%u).\n", myid);
+                static const size_t ps = sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint8_t)+sizeof(uint16_t);
+                if(rs == ps)
+                {
+                    memcpy(&myid, &buff[sizeof(uint64_t)+sizeof(uint8_t)], sizeof(uint8_t));
+                    memcpy(&NUM_COMETS, &buff[sizeof(uint64_t)+sizeof(uint8_t)+sizeof(uint8_t)], sizeof(uint16_t));
+                    NUM_COMETS = LE16TOH(NUM_COMETS);
+                    if(NUM_COMETS > MAX_COMETS){NUM_COMETS = MAX_COMETS;}
+                    else if(NUM_COMETS < 16){NUM_COMETS = 16;}
+                    rcs = NUM_COMETS / 8;
+                    rrcs = 1.f / (f32)rcs;
+                    rncr = 11.f / NUM_COMETS;
+                    printf("recvThread: Registration was accepted; id(%u), num_comets(%u).\n", myid, NUM_COMETS);
+                }
+                else
+                    printf("recvThread: Registration was accepted; id(%u).\n", myid);
                 accepted = 1;
             }
         }
+//*************************************
+// MSG_TYPE_BAD_REGISTER_VALUE
+//*************************************
         else if(buff[8] == MSG_TYPE_BAD_REGISTER_VALUE) // epoch too old
         {
             printf("recvThread: Your epoch already expired, it's too old slow poke!\n");
@@ -662,6 +1062,9 @@ void *recvThread(void *arg)
     }
 }
 
+//*************************************
+// init networking
+//*************************************
 int initNet()
 {
     // resolve host
@@ -708,7 +1111,7 @@ int initNet()
             rrgf++;
         else
             rrg++;
-        if(rrgf+rrg >= 33){break;}
+        if(rrg+rrgf >= 33){break;}
         usleep(100000); // 100ms
     }
     if(rrg == 0)
@@ -760,12 +1163,6 @@ void main_loop()
 //*************************************
 // keystates
 //*************************************
-
-    vec vecview[3] = {
-        {view.m[0][0], view.m[1][0], view.m[2][0]}, // r
-        {view.m[0][1], view.m[1][1], view.m[2][1]}, // u
-        {view.m[0][2], view.m[1][2], view.m[2][2]}  // f
-    };
 
     static f32 zrot = 0.f;
 
@@ -846,17 +1243,17 @@ void main_loop()
 
         if(keystate[6] && !keystate[7]) {
             if(zrot > 0.f) {
-                zrot += dt*sens*10.f;
+                zrot += dt*rollsens*10.f;
             } else {
                 zrot *= 1.f-(dt*0.02f);
-                zrot += dt*sens*10.f;
+                zrot += dt*rollsens*10.f;
             }
         } else if(keystate[7] && !keystate[6]) {
             if(zrot < 0.f) {
-                zrot -= dt*sens*10.f;
+                zrot -= dt*rollsens*10.f;
             } else {
                 zrot *= 1.f-(dt*0.02f);
-                zrot -= dt*sens*10.f;
+                zrot -= dt*rollsens*10.f;
             }
         } else if(keystate[6] && keystate[7]) {
             zrot = 0.f;
@@ -872,6 +1269,7 @@ void main_loop()
         }
     }
     if(pmod < 1.13f) // exo collision
+    //if(pmod < 1.28f) // exo collision
     {
         vec n = ppr;
         vNorm(&n);
@@ -881,51 +1279,35 @@ void main_loop()
         vAdd(&ppr, ppr, n);
     }
 
-    // ufo collision
-    const uint sui = ufoind * 3;
-    vec ep = (vec){exo_vertices[sui], exo_vertices[sui+1], exo_vertices[sui+2]};
-    vec en = ep;
-    vNorm(&en);
-    vec ens;
-    vMulS(&ens, en, 0.15f);
-    vAdd(&ep, ep, ens);
-    const float dst = t - ufospt;
-    if(dst <= 43.f)
+    // sun collision
+    f32 ud = vDistSq(lightpos, (vec){-ppr.x, -ppr.y, -ppr.z});
+    if(ud < 0.16f)
     {
-        const float ud = vDist(ep, (vec){-ppr.x, -ppr.y, -ppr.z});
-        if(fabsf(vSum(pp)) > 0.f && ud < 0.18f)
+        vec rn = (vec){-ppr.x, -ppr.y, -ppr.z};
+        vSub(&rn, rn, lightpos);
+        vNorm(&rn);
+
+        vec n = pp;
+        vNorm(&n);
+        vInv(&n);
+
+        if(vDot(rn, n) < 0.f)
         {
-            vec rn = (vec){-ppr.x, -ppr.y, -ppr.z};
-            vSub(&rn, rn, ep);
-            vNorm(&rn);
-
-            vec n = pp;
-            vNorm(&n);
-            vInv(&n);
-
-            //printf("%f\n", vDot(rn, n));
-            if(vDot(rn, n) < 0.f)
-            {
-                vReflect(&pp, pp, (vec){rn.x, rn.y, rn.z});
-                vMulS(&pp, pp, 0.3f);
-            }
-            else
-            {
-                vCopy(&pp, rn);
-                vMulS(&pp, pp, 1.3f); // give a kick back for shield harassment
-            }
-
-            //printf("2: %f %f %f\n", pp.x, pp.y, pp.z);
-            vMulS(&n, n, 0.18f - ud);
-            if(isnormal(n.x) == 1 && isnormal(n.y) == 1 && isnormal(n.z) == 1)
-            {
-                //printf("3: %f %f %f\n", n.x, n.y, n.z);
-                vAdd(&ppr, ppr, n);
-                //printf("4: %f %f %f\n", ppr.x, ppr.y, ppr.z);
-            }
-
-            ufosht = t;
+            vReflect(&pp, pp, (vec){rn.x, rn.y, rn.z});
+            vMulS(&pp, pp, 0.3f);
         }
+        else
+        {
+            vCopy(&pp, rn);
+            vMulS(&pp, pp, 1.3f); // give a kick back for shield harassment
+        }
+
+        ud = vDist(lightpos, (vec){-ppr.x, -ppr.y, -ppr.z});
+        vMulS(&n, n, 0.4f - ud);
+        if(isnormal(n.x) == 1 && isnormal(n.y) == 1 && isnormal(n.z) == 1)
+            vAdd(&ppr, ppr, n);
+
+        sunsht = t;
     }
 
 //*************************************
@@ -937,73 +1319,39 @@ void main_loop()
     if(focus_cursor == 1)
     {
         glfwGetCursorPos(window, &x, &y);
-        xrot = (ww2-x)*sens;
-        yrot = (wh2-y)*sens;
-        glfwSetCursorPos(window, ww2, wh2);
+        if(controls == 0)
+            xrot = (lx-x)*sens;
+        else
+            zrot = (lx-x)*rollsens;
+        yrot = (ly-y)*sens;
+        lx = x, ly = y;
     }
 
-    // Test_User angle-axis rotation
-    // https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation
-    // https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula
-    vec tmp0, tmp1;
-
-    // left/right
-    vMulS(&tmp0, vecview[0], cosf(xrot));
-
-    vCross(&tmp1, vecview[1], vecview[0]);
-    vMulS(&tmp1, tmp1, sinf(xrot));
-
-    vMulS(&vecview[0], vecview[1], vDot(vecview[1], vecview[0]) * (1.f - cosf(xrot)));
-
-    vAdd(&vecview[0], vecview[0], tmp0);
-    vAdd(&vecview[0], vecview[0], tmp1);
-
-    // up/down
-    vMulS(&tmp0, vecview[1], cosf(yrot));
-
-    vCross(&tmp1, vecview[0], vecview[1]);
-    vMulS(&tmp1, tmp1, sinf(yrot));
-
-    vMulS(&vecview[1], vecview[0], vDot(vecview[0], vecview[1]) * (1.f - cosf(yrot)));
-
-    vAdd(&vecview[1], vecview[1], tmp0);
-    vAdd(&vecview[1], vecview[1], tmp1);
-
-    vCross(&vecview[2], vecview[0], vecview[1]);
-    vCross(&vecview[1], vecview[2], vecview[0]);
-
-    // roll
-    vMulS(&tmp0, vecview[0], cosf(zrot));
-
-    vCross(&tmp1, vecview[2], vecview[0]);
-    vMulS(&tmp1, tmp1, sinf(zrot));
-
-    vMulS(&vecview[0], vecview[2], vDot(vecview[2], vecview[0]) * (1.f - cosf(zrot)));
-
-    vAdd(&vecview[0], vecview[0], tmp0);
-    vAdd(&vecview[0], vecview[0], tmp1);
-
-    vCross(&vecview[1], vecview[2], vecview[0]);
-
-    vNorm(&vecview[0]);
-    vNorm(&vecview[1]);
-    vNorm(&vecview[2]);
-
-    view = (mat){
-        vecview[0].x, vecview[1].x, vecview[2].x, view.m[0][3],
-        vecview[0].y, vecview[1].y, vecview[2].y, view.m[1][3],
-        vecview[0].z, vecview[1].z, vecview[2].z, view.m[2][3],
-        0.f, 0.f, 0.f, view.m[3][3]
-    };
+    // gimbal free rotation in three axis
+    mAngleAxisRotate(&view, view, xrot, yrot, zrot);
 
     // translate
     mTranslate(&view, ppr.x, ppr.y, ppr.z);
 
     // sun pos
+#ifdef SUN_GOD
+    vec lookdir;
+    mGetViewZ(&lookdir, view);
+    vMulS(&lookdir, lookdir, 1.3f);
+    vec np = (vec){-ppr.x, -ppr.y, -ppr.z};
+    vAdd(&np, np, lookdir);
+    lightpos = np;
+#else
     sun_pos += 0.03f*dt;
     lightpos.x = sinf(sun_pos) * 6.3f;
     lightpos.y = cosf(sun_pos) * 6.3f;
     lightpos.z = sinf(sun_pos) * 6.3f;
+#endif
+
+#ifdef VERBOSE
+    dumpZeroComets();
+    //dumpComets();
+#endif
 
 //*************************************
 // render
@@ -1013,7 +1361,7 @@ void main_loop()
     ///
     
     shadeLambert2(&position_id, &projection_id, &modelview_id, &lightpos_id, &color_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
+    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
     glUniform3f(lightpos_id, lightpos.x, lightpos.y, lightpos.z);
     glUniform1f(opacity_id, 1.f);
     
@@ -1029,29 +1377,14 @@ void main_loop()
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlExo.iid);
 
-    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (GLfloat*) &view.m[0][0]);
-    glDrawElements(GL_TRIANGLES, exo_numind, GL_UNSIGNED_INT, 0);
-
-    /// the inner wont draw now if occluded by the exo due to depth buffer
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlInner.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlInner.cid);
-    glVertexAttribPointer(color_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(color_id);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlExo.iid);
-
-    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (GLfloat*) &view.m[0][0]);
+    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &view.m[0][0]);
     glDrawElements(GL_TRIANGLES, exo_numind, GL_UNSIGNED_INT, 0);
 
     ///
 
     // lambert
     shadeLambert(&position_id, &projection_id, &modelview_id, &lightpos_id, &color_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
+    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
     glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
     glUniform1f(opacity_id, 1.f);
     glUniform3f(color_id, 1.f, 1.f, 0.f);
@@ -1064,7 +1397,7 @@ void main_loop()
 
     // "light source" dummy object
     mIdent(&model);
-    mTranslate(&model, lightpos.x, lightpos.y, lightpos.z);
+    mSetPos(&model, lightpos);
     mScale(&model, 3.4f, 3.4f, 3.4f);
     mMul(&modelview, &model, &view);
     glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
@@ -1072,364 +1405,352 @@ void main_loop()
 
     ///
 
-    // lambert4
-    shadeLambert4(&position_id, &projection_id, &modelview_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
-    glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
-    glUniform1f(opacity_id, 1.f);
-
-    // comets
-    int bindstate = -1;
-    int cbs = -1;
-    GLushort indexsize = rock8_numind;
-    for(uint16_t i = 0; i < NUM_COMETS; i++)
-    {
-        // simulation
-        if(comets[i].is_boom > 0.f) // explode
-        {
-            if(cbs != 0)
-            {
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, tex[12]);
-                glUniform1i(sampler_id, 0);
-                cbs = 0;
-            }
-
-            if(killgame == 0)
-            {
-                vec dtv = comets[i].newvel;
-                vMulS(&dtv, dtv, dt);
-                vAdd(&comets[i].newpos, comets[i].newpos, dtv);
-
-                if(comets[i].is_boom == 1.f)
-                {
-                    doExoImpact((vec){comets[i].pos.x, comets[i].pos.y, comets[i].pos.z}, (comets[i].scale+(vMod(comets[i].vel)*0.1f))*1.2f);
-                    comets[i].scale *= 2.0f;
-                }
-            
-                comets[i].is_boom -= 0.3f*dt;
-                comets[i].scale -= 0.03f*dt;
-            }
-
-            if(comets[i].is_boom <= 0.f || comets[i].scale <= 0.f)
-            {
-                comets[i].pos = comets[i].newpos;
-                comets[i].vel = comets[i].newvel;
-                comets[i].rot = comets[i].newrot;
-                comets[i].scale = comets[i].newscale;
-                comets[i].is_boom = 0.f;
-                continue;
-            }
-            glUniform1f(opacity_id, comets[i].is_boom);
-        }
-        else if(comets[i].is_boom <= 0.f) // detect impacts
-        {
-            if(killgame == 0)
-            {
-                // increment position
-                vec dtv = comets[i].vel;
-                vMulS(&dtv, dtv, dt);
-                vAdd(&comets[i].pos, comets[i].pos, dtv);
-
-                // player impact
-                const f32 cd = vDistSq((vec){-ppr.x, -ppr.y, -ppr.z}, comets[i].pos);
-                const f32 cs = comets[i].scale+0.06f;
-                if(cd < cs*cs)
-                {
-                    // tell server of collision
-                    const uint64_t mt = microtime();
-                    const size_t packet_len = 19;
-                    unsigned char packet[packet_len];
-                    memcpy(&packet, &pid, sizeof(uint64_t));
-                    memcpy(&packet[8], &(uint8_t){MSG_TYPE_ASTEROID_DESTROYED}, sizeof(uint8_t));
-                    memcpy(&packet[9], &mt, sizeof(uint64_t));
-                    memcpy(&packet[17], &(uint16_t){i}, sizeof(uint16_t));
-                    csend(packet, 19);
-#ifdef VERBOSE
-                    printf("[%u] asteroid_destroyed sent.\n", i);
-#endif
-                }
-            }
-
-            cbs = 1;
-        }
-
-        // this is a nightmare and not super efficient but urgh for this purpose its fine
-        if(cbs != 0)
-        {
-            const uint ti = i - (12*(i/12));
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, tex[ti]);
-            glUniform1i(sampler_id, 0);
-        }
-
-        // this would be better due to sticking to painters algo
-        // if I didn't have to force a new texture on every cbs != 0 anyway
-        // if(cbs != 0)
-        // {
-        //     static int lt = -1;
-        //     static const float r = 11.f / NUM_COMETS;
-        //     const uint ti = (r * (float)i) + 0.5f;
-        //     if(ti != lt)
-        //     {
-        //         glActiveTexture(GL_TEXTURE0);
-        //         glBindTexture(GL_TEXTURE_2D, tex[ti]);
-        //         glUniform1i(sampler_id, 0);
-        //         lt = ti;
-        //     }
-        // }
-
-        // translate comet
-        mIdent(&model);
-        mTranslate(&model, comets[i].pos.x, comets[i].pos.y, comets[i].pos.z);
-
-        // rotate comet
-        f32 mag = 0.f;
-        if(killgame == 0){mag = comets[i].rot*0.01f*t;}
-        if(comets[i].rot < 100.f)
-            mRotY(&model, mag);
-        if(comets[i].rot < 200.f)
-            mRotZ(&model, mag);
-        if(comets[i].rot < 300.f)
-            mRotX(&model, mag);
-        
-        // scale comet
-        mScale(&model, comets[i].scale, comets[i].scale, comets[i].scale);
-
-        // make modelview
-        mMul(&modelview, &model, &view);
-        glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-
-        // bind one of the 8 rock models
-        uint nbs = i * rrcs;
-        if(nbs > 7){nbs = 7;}
-        if(nbs != bindstate)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].vid);
-            glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-            glEnableVertexAttribArray(position_id);
-
-            glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].nid);
-            glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-            glEnableVertexAttribArray(normal_id);
-
-            glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].tid);
-            glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
-            glEnableVertexAttribArray(texcoord_id);
-
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlRock[nbs].iid);
-            bindstate = nbs;
-        }
-
-        if(nbs == 0){indexsize = rock1_numind;}
-        else if(nbs == 1){indexsize = rock2_numind;}
-        else if(nbs == 2){indexsize = rock3_numind;}
-        else if(nbs == 3){indexsize = rock4_numind;}
-        else if(nbs == 4){indexsize = rock5_numind;}
-        else if(nbs == 5){indexsize = rock6_numind;}
-        else if(nbs == 6){indexsize = rock7_numind;}
-        else if(nbs == 7){indexsize = rock8_numind;}
-
-        // draw it
-        if(comets[i].is_boom > 0.f)
-        {
-            glEnable(GL_BLEND);
-            glDrawElements(GL_TRIANGLES, indexsize, GL_UNSIGNED_SHORT, 0);
-            glDisable(GL_BLEND);
-        }
-        else
-            glDrawElements(GL_TRIANGLES, indexsize, GL_UNSIGNED_SHORT, 0);
-    }
-
     // players
-    shadeLambert(&position_id, &projection_id, &modelview_id, &lightpos_id, &color_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
-    glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
-    glUniform1f(opacity_id, 1.f);
-    glUniform3f(color_id, 0.f, 1.f, 1.f);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlLow.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlLow.iid);
-
+#ifdef FAKE_PLAYER
+    players[0] = 0.f;
+    players[1] = 3.f;
+    players[2] = 0.f;
+    pfront[0] = -view.m[0][2];
+    pfront[1] = -view.m[1][2];
+    pfront[2] = -view.m[2][2];
+    pup[0] = -view.m[0][1];
+    pup[1] = -view.m[1][1];
+    pup[2] = -view.m[2][1];
+#endif
+    
     for(uint i = 0; i < MAX_PLAYERS; i++)
     {
         const uint j = i*3;
         if(players[j] != 0.f || players[j+1] != 0.f || players[j+2] != 0.f)
         {
-            players[j]   += pvel[j]  *dt;
-            players[j+1] += pvel[j+1]*dt;
-            players[j+2] += pvel[j+2]*dt;
+#ifdef ENABLE_PLAYER_PREDICTION
+            if(killgame == 0)
+            {
+                players[j]   += pvel[j]  *dt;
+                players[j+1] += pvel[j+1]*dt;
+                players[j+2] += pvel[j+2]*dt;
+            }
+#endif
+            const f32 cpmod = vMod((vec){players[j], players[j+1], players[j+2]});
+
+            // render ufo
+            shadePhong4(&position_id, &projection_id, &modelview_id, &normalmat_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &specularmap_id, &normalmap_id, &opacity_id);
+            glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
+            glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
+            glUniform1f(opacity_id, 1.f);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex[14]);
+            glUniform1i(sampler_id, 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, tex[15]);
+            glUniform1i(specularmap_id, 1);
+
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, tex[16]);
+            glUniform1i(normalmap_id, 2);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.vid);
+            glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(position_id);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.nid);
+            glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(normal_id);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.tid);
+            glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(texcoord_id);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfo.iid);
 
             mIdent(&model);
-            mTranslate(&model, -players[j], -players[j+1], -players[j+2]);
-            mScale(&model, 0.01f, 0.01f, 0.01f);
+            vec ep = (vec){-players[j], -players[j+1], -players[j+2]};
+            vec en = ep;
+            if(cpmod < 1.29f)
+            {
+                vNorm(&en);
+                mLookAt(&model, ep, en);
+            }
+            else
+            {
+                mSetPos(&model, (vec){-players[j], -players[j+1], -players[j+2]});
+                vec front = (vec){pfront[j], pfront[j+1], pfront[j+2]};
+                vec up = (vec){pup[j], pup[j+1], pup[j+2]};
+                vec left;
+                vCross(&left, front, up);
+                model.m[0][0] = left.x;
+                model.m[0][1] = left.y;
+                model.m[0][2] = left.z;
+                model.m[1][0] = front.x;
+                model.m[1][1] = front.y;
+                model.m[1][2] = front.z;
+                model.m[2][0] = up.x;
+                model.m[2][1] = up.y;
+                model.m[2][2] = up.z;
+            }
+            mMul(&modelview, &model, &view);
+
+            mat inverted, normalmat;
+            mInvert(&inverted.m[0][0], &modelview.m[0][0]);
+            mTranspose(&normalmat, &inverted);
+
+            glUniformMatrix4fv(normalmat_id, 1, GL_FALSE, (f32*) &normalmat.m[0][0]);
+            glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
+            glDrawElements(GL_TRIANGLES, ufo_numind, GL_UNSIGNED_SHORT, 0);
+
+            // render lights
+            shadeFullbright(&position_id, &projection_id, &modelview_id, &color_id, &opacity_id);
+            glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*)&projection.m[0][0]);
+            glUniform3f(color_id, 0.f, 1.f, 1.f);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfoLights.vid);
+            glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(position_id);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoLights.iid);
+
+            glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*)&modelview.m[0][0]);
+            glDrawElements(GL_TRIANGLES, ufo_lights_numind, GL_UNSIGNED_BYTE, 0);
+
+            // render interior
+            shadeFullbright1(&position_id, &projection_id, &modelview_id, &color_id, &opacity_id);
+            glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*)&projection.m[0][0]);
+            glUniform1f(opacity_id, 1.f);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfoInterior.vid);
+            glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(position_id);
+
+            glBindBuffer(GL_ARRAY_BUFFER, mdlUfoInterior.cid);
+            glVertexAttribPointer(color_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(color_id);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoInterior.iid);
+
+            glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*)&modelview.m[0][0]);
+            glDrawElements(GL_TRIANGLES, ufo_interior_numind, GL_UNSIGNED_BYTE, 0);
+
+            // render beam
+            if(cpmod < 1.27f)
+            {
+                shadeLambert4(&position_id, &projection_id, &modelview_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &opacity_id);
+                glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
+                glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
+                glUniform1f(opacity_id, 0.3f);
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, tex[13]);
+                glUniform1i(sampler_id, 0);
+
+                glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.vid);
+                glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(position_id);
+
+                glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.nid);
+                glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(normal_id);
+
+                glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.tid);
+                glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(texcoord_id);
+
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoBeam.iid);
+
+                mIdent(&model);
+                mLookAt(&model, ep, en);
+                mRotZ(&model, t*0.3f);
+                mMul(&modelview, &model, &view);
+
+                glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
+                glEnable(GL_BLEND);
+                glDrawElements(GL_TRIANGLES, beam_numind, GL_UNSIGNED_BYTE, 0);
+                glDisable(GL_BLEND);
+            }
+        }
+    }
+
+    // lambert4
+    shadeLambert4(&position_id, &projection_id, &modelview_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &opacity_id);
+    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
+    glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
+    glUniform1f(opacity_id, 1.f);
+
+    // comets
+    int bindstate = -1;
+    GLushort indexsize = rock8_numind;
+    for(uint h = 0; h < 2; h++)
+    {
+        if(h == 1)
+        {
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex[12]);
+            glUniform1i(sampler_id, 0);
+        }
+
+        for(uint16_t i = 0; i < NUM_COMETS; i++)
+        {
+            // simulation
+            if(h == 1 && comets[i].is_boom > 0.f) // explode
+            {
+                if(killgame == 0)
+                {
+                    // while is_boom stepping for prediction offset
+                    vec dtv = comets[i].newvel;
+                    vMulS(&dtv, dtv, dt);
+                    vAdd(&comets[i].newpos, comets[i].newpos, dtv);
+
+                    if(comets[i].is_boom == 1.f)
+                    {
+                        doExoImpact((vec){comets[i].pos.x, comets[i].pos.y, comets[i].pos.z}, (comets[i].scale+(vMod(comets[i].vel)*0.1f))*1.2f);
+                        comets[i].scale *= 2.0f;
+                    }
+                
+                    comets[i].is_boom -= 0.3f*dt;
+                    comets[i].scale -= 0.03f*dt;
+                }
+
+                if(comets[i].is_boom <= 0.f || comets[i].scale <= 0.f)
+                {
+                    comets[i].pos = comets[i].newpos;
+                    comets[i].vel = comets[i].newvel;
+                    comets[i].rot = comets[i].newrot;
+                    comets[i].scale = comets[i].newscale;
+                    
+                    comets[i].is_boom = 0.f;
+                    continue;
+                }
+                glUniform1f(opacity_id, comets[i].is_boom);
+            }
+            else if(h == 0 && comets[i].is_boom <= 0.f) // detect impacts
+            {
+                if(killgame == 0)
+                {
+                    // increment position
+                    vec dtv = comets[i].vel;
+                    vMulS(&dtv, dtv, dt);
+                    vAdd(&comets[i].pos, comets[i].pos, dtv);
+
+                    // player impact
+                    const f32 cd = vDistSq((vec){-ppr.x, -ppr.y, -ppr.z}, comets[i].pos);
+                    const f32 cs = comets[i].scale+0.18f;
+                    if(cd < cs*cs)
+                    {
+                        static f32 lt = 0;
+                        if(t > lt)
+                        {
+                            // tell server of collision
+                            const uint64_t mt = microtime();
+                            const size_t packet_len = 19;
+                            unsigned char packet[packet_len];
+                            memcpy(&packet, &pid, sizeof(uint64_t));
+                            memcpy(&packet[8], &(uint8_t){MSG_TYPE_ASTEROID_DESTROYED}, sizeof(uint8_t));
+                            memcpy(&packet[9], &mt, sizeof(uint64_t));
+                            memcpy(&packet[17], &(uint16_t){i}, sizeof(uint16_t));
+                            csend(packet, 19);
+                            lt = t + 0.1f;
+                        }
+    #ifdef VERBOSE
+                        printf("[%u] asteroid_destroyed sent.\n", i);
+    #endif
+                    }
+
+                    // sun impact
+                    const f32 cld = 0.4f+comets[i].scale;
+                    if(vDistSq(comets[i].pos, lightpos) < cld*cld)
+                        sunsht = t;
+                }
+            }
+
+            // this is zuper efficient now
+            if(h == 0 && comets[i].is_boom <= 0.f)
+            {
+                // painters algo
+                static int lt = -1;
+                const uint ti = (rncr * (f32)i) + 0.5f;
+                if(ti != lt)
+                {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, tex[ti]);
+                    glUniform1i(sampler_id, 0);
+                    lt = ti;
+                }
+            }
+            else if(h == 1 && comets[i].is_boom <= 0.f)
+                continue;
+            else if(h == 0 && comets[i].is_boom > 0.f)
+                continue;
+
+            // translate comet
+            mIdent(&model);
+            mSetPos(&model, comets[i].pos);
+
+            // rotate comet
+            f32 mag = 0.f;
+            if(killgame == 0){mag = comets[i].rot*0.01f*t;}
+            if(comets[i].rot < 100.f)
+                mRotY(&model, mag);
+            if(comets[i].rot < 200.f)
+                mRotZ(&model, mag);
+            if(comets[i].rot < 300.f)
+                mRotX(&model, mag);
+            
+            // scale comet
+            mScale(&model, comets[i].scale, comets[i].scale, comets[i].scale);
+
+            // make modelview
             mMul(&modelview, &model, &view);
             glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-            glDrawElements(GL_TRIANGLES, rock1_numind, GL_UNSIGNED_SHORT, 0);
+
+            // bind one of the 8 rock models
+            uint nbs = i * rrcs;
+            if(nbs > 7){nbs = 7;}
+            if(nbs != bindstate)
+            {
+                glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].vid);
+                glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(position_id);
+
+                glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].nid);
+                glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(normal_id);
+
+                glBindBuffer(GL_ARRAY_BUFFER, mdlRock[nbs].tid);
+                glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(texcoord_id);
+
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlRock[nbs].iid);
+                bindstate = nbs;
+            }
+
+            if(nbs == 0){indexsize = rock1_numind;}
+            else if(nbs == 1){indexsize = rock2_numind;}
+            else if(nbs == 2){indexsize = rock3_numind;}
+            else if(nbs == 3){indexsize = rock4_numind;}
+            else if(nbs == 4){indexsize = rock5_numind;}
+            else if(nbs == 5){indexsize = rock6_numind;}
+            else if(nbs == 6){indexsize = rock7_numind;}
+            else if(nbs == 7){indexsize = rock8_numind;}
+
+            // draw it
+            if(comets[i].is_boom > 0.f)
+                glDrawElements(GL_TRIANGLES, indexsize, GL_UNSIGNED_SHORT, 0);
+            else
+                glDrawElements(GL_TRIANGLES, indexsize, GL_UNSIGNED_SHORT, 0);
         }
+
+        if(h == 1){glDisable(GL_BLEND);glEnable(GL_CULL_FACE);}
     }
 
-    // UFO
-    float dopa = 1.f;
-    if(dst <= 1.f)
-    {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        dopa = dst;
-    }
-    else if(dst >= ufonxw) // TEST
-    {
-        ufospt = t;
-        ufoind = esRand(0, exo_numvert-1);
-        ufonxw = esRandFloat(48.f, 66.f);
-    }
-    else if(dst >= 42.f)
-    {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        dopa = 1.f-(dst-42.f);
-    }
-
-if(dst <= 43.f)
-{
-    shadePhong4(&position_id, &projection_id, &modelview_id, &normalmat_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &specularmap_id, &normalmap_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
-    glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
-    glUniform1f(opacity_id, dopa);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex[14]);
-    glUniform1i(sampler_id, 0);
-
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, tex[15]);
-    glUniform1i(specularmap_id, 1);
-
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, tex[16]);
-    glUniform1i(normalmap_id, 2);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.nid);
-    glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(normal_id);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfo.tid);
-    glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(texcoord_id);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfo.iid);
-
-    mIdent(&model);
-    mLookAt(&model, ep, en);
-    mMul(&modelview, &model, &view);
-
-    mat inverted, normalmat;
-    mInvert(&inverted.m[0][0], &modelview.m[0][0]);
-    mTranspose(&normalmat, &inverted);
-    
-    glUniformMatrix4fv(normalmat_id, 1, GL_FALSE, (GLfloat*) &normalmat.m[0][0]);
-    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-    glDrawElements(GL_TRIANGLES, ufo_numind, GL_UNSIGNED_SHORT, 0);
-
-    /// ufo lights
-
-    shadeFullbright(&position_id, &projection_id, &modelview_id, &color_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
-    //glUniform3f(color_id, 0.f, 1.f, 1.f);
-    //glUniform3f(color_id, 0.f, fabsf(sinf(t*0.3f)), fabsf(cosf(t*0.3f)));
-    const float ils = 0.3f + (0.7f - ((42.f-dst)*0.016666667f));
-    float ls = (42.f-dst)*0.02380952425f;
-    if(ls < 0.f){ls = 0.f;}
-    glUniform3f(color_id, ls, ils, ils);
-    glUniform1f(opacity_id, dopa);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfoLights.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoLights.iid);
-
-    mIdent(&model);
-    mLookAt(&model, ep, en);
-    mMul(&modelview, &model, &view);
-
-    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-    glDrawElements(GL_TRIANGLES, ufo_lights_numind, GL_UNSIGNED_BYTE, 0);
-
-    /// ufo tri
-
-    glUniform3f(color_id, 0.f, 1.f, 0.f);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfoTri.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoTri.iid);
-
-    uint pi = 0;
-    for(float f = 0; f < x2PI; f+=0.1747f)
-    {
-        if(dst <= 42.f)
-        {
-            if(pi > dst*0.8571428657f){glUniform3f(color_id, 1.f, 0.f, 0.f);}
-        }
-        else if(dst <= 43.f){glUniform3f(color_id, 0.f, 1.f, 0.f);}
-        else{glUniform3f(color_id, 1.f, 0.f, 0.f);}
-        mIdent(&model);
-        mLookAt(&model, ep, en);
-        mRotZ(&model, f);
-        mMul(&modelview, &model, &view);
-        glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-        glDrawElements(GL_TRIANGLES, ufo_tri_numind, GL_UNSIGNED_BYTE, 0);
-        pi++;
-    }
-
-    /// ufo beam
-
-    shadeLambert4(&position_id, &projection_id, &modelview_id, &lightpos_id, &normal_id, &texcoord_id, &sampler_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
-    glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
-    glUniform1f(opacity_id, dopa*0.3f);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex[13]);
-    glUniform1i(sampler_id, 0);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.vid);
-    glVertexAttribPointer(position_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(position_id);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.nid);
-    glVertexAttribPointer(normal_id, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(normal_id);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mdlUfoBeam.tid);
-    glVertexAttribPointer(texcoord_id, 2, GL_FLOAT, GL_FALSE, 0, 0);
-    glEnableVertexAttribArray(texcoord_id);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoBeam.iid);
-
-    mIdent(&model);
-    mLookAt(&model, ep, en);
-    mRotZ(&model, t*0.3f);
-    mMul(&modelview, &model, &view);
-
-    glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
-glEnable(GL_BLEND);
-    glDrawElements(GL_TRIANGLES, beam_numind, GL_UNSIGNED_BYTE, 0);
-
-    // ufo shield
-    const f32 dsht = t-ufosht;
+    // render shield
+    const f32 dsht = (t-sunsht)*0.3f;
     if(dsht <= 1.f)
     {
         shadeLambert2(&position_id, &projection_id, &modelview_id, &lightpos_id, &color_id, &opacity_id);
-        glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
+        glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*)&projection.m[0][0]);
         glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
         glUniform1f(opacity_id, 1.f-dsht);
 
@@ -1444,16 +1765,14 @@ glEnable(GL_BLEND);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlUfoShield.iid);
 
         mIdent(&model);
-        //mLookAt(&model, ep, en); // could just translate here
-        mTranslate(&model, ep.x, ep.y, ep.z);
+        mSetPos(&model, lightpos);
         mMul(&modelview, &model, &view);
 
         glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &modelview.m[0][0]);
+        glEnable(GL_BLEND);
         glDrawElements(GL_TRIANGLES, ufo_shield_numind, GL_UNSIGNED_SHORT, 0);
+        glDisable(GL_BLEND);
     }
-}
-glDisable(GL_BLEND);
-glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
     // swap
     glfwSwapBuffers(window);
@@ -1483,11 +1802,12 @@ void window_size_callback(GLFWwindow* window, int width, int height)
 
     mIdent(&projection);
     mPerspective(&projection, 60.0f, aspect, 0.01f, FAR_DISTANCE);
-    if(projection_id != -1){glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);}
+    if(projection_id != -1){glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*)&projection.m[0][0]);}
 }
 
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+    if(lgdonce == 0){return;} // nothing until game start
     if(action == GLFW_PRESS)
     {
         if(key == GLFW_KEY_A){ keystate[0] = 1; }
@@ -1499,6 +1819,7 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
         else if(key == GLFW_KEY_Q){ keystate[6] = 1; }
         else if(key == GLFW_KEY_E){ keystate[7] = 1; }
         else if(key == GLFW_KEY_LEFT_CONTROL){ brake = 1; }
+        else if(key == GLFW_KEY_LEFT_ALT){ pp = (vec){0.f, 0.f, 0.f}; }
         else if(key == GLFW_KEY_F)
         {
             if(t-lfct > 2.0)
@@ -1515,16 +1836,16 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
             autoroll = 1 - autoroll;
             printf("autoroll: %u\n", autoroll);
         }
+        else if(key == GLFW_KEY_T)
+        {
+            controls = 1 - controls;
+            printf("controls: %u\n", controls);
+        }
         else if(key == GLFW_KEY_ESCAPE)
         {
-            focus_cursor = 1 - focus_cursor;
-            if(focus_cursor == 0)
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            else
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+            focus_cursor = 0;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             window_size_callback(window, winw, winh);
-            glfwSetCursorPos(window, ww2, wh2);
-            glfwGetCursorPos(window, &ww2, &wh2);
         }
         else if(key == GLFW_KEY_V)
         {
@@ -1555,21 +1876,23 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
+    if(lgdonce == 0){return;} // nothing until game start
     if(action == GLFW_PRESS)
     {
         if(button == GLFW_MOUSE_BUTTON_LEFT)
         {
-            focus_cursor = 1 - focus_cursor;
-            if(focus_cursor == 0)
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            else
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-            window_size_callback(window, winw, winh);
-            glfwSetCursorPos(window, ww2, wh2);
-            glfwGetCursorPos(window, &ww2, &wh2);
+            if(focus_cursor == 0 && lgdonce != 0)
+            {
+                focus_cursor = 1;
+                glfwGetCursorPos(window, &lx, &ly);
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                window_size_callback(window, winw, winh);
+            }
         }
         else if(button == GLFW_MOUSE_BUTTON_RIGHT)
             brake = 1;
+        else if(button == GLFW_MOUSE_BUTTON_MIDDLE || button == GLFW_MOUSE_BUTTON_4)
+            pp = (vec){0.f, 0.f, 0.f};
     }
     else if(action == GLFW_RELEASE)
         brake = 0;
@@ -1687,18 +2010,43 @@ int main(int argc, char** argv)
     sepoch = time(0);
     sepoch = ((((time_t)(((double)sepoch / 60.0) / 3.0)+1)*3)*60); // next 20th of an hour
 
+    // load config
+    loadConfig();
+
     // help
     printf("----\n");
-    printf("Online Fractal Attack\n");
+    printf("%s\n", glfwGetVersionString());
+    printf("----\n");
+    printf("AstroImpact\n");
     printf("----\n");
     printf("James William Fletcher (github.com/mrbid)\n");
+    printf("https://AstroImpact.net\n");
+    printf("https://notabug.org/AstroImpact/AstroImpact\n");
     printf("----\n");
-    printf("Argv(2): start epoch, server host/ip, num asteroids, msaa 0-16, autoroll 0-1, center window 0-1\n");
+    printf("Argv: <start epoch> <server host/ip> <num asteroids> <msaa 0-16> <autoroll 0-1> <center window 0-1> <control-type 0-1> <mouse sensitivity (0.001+)> <roll sensitivity (0.001+)>\n");
+    printf("e.g: %s %lu vfcash.co.uk 64 16 1 1 0 0.003 0.003\n", argv[0], time(0)+33);
+    printf("----\n");
+    printf("- Config File (~/.config/fat.cfg) or relative to cwd: (.config/fat.cfg) or (fat.cfg)\n");
+    const char* home = getenv("HOME");
+    if(home != NULL){printf("Create or edit this file: %s/.config/fat.cfg\nusing the following template:\n----\n", home);}
+    printf("NUM_ASTEROIDS %u\n", NUM_COMETS);
+    printf("MSAA %u\n", msaa);
+    printf("AUTOROLL %u\n", autoroll);
+    printf("CENTER_WINDOW %u\n", center);
+    printf("CONTROLS %u\n", controls);
+    printf("LOOKSENS %g\n", sens*1000.f);
+    printf("ROLLSENS %g\n", rollsens*1000.f);
+    printf("----\n");
+    printf("!! The CONTROLS setting in the config file allows you to swap between roll and yaw for mouse x:l=>r.\n");
+    printf("----\n");
     printf("F = FPS to console.\n");
     printf("R = Toggle auto-tilt/roll around planet.\n");
-    printf("W, A, S, D, Q, E, SPACE, LEFT SHIFT\n");
-    printf("L-CTRL / Right Click to Brake\n");
-    printf("Escape / Left Click to free mouse focus.\n");
+    printf("T = Toggle between mouse look yaw/roll.\n");
+    printf("W, A, S, D, Q, E, SPACE, LEFT SHIFT.\n");
+    printf("Q+E to stop rolling.\n");
+    printf("L-CTRL / Right Click to Brake.\n");
+    printf("L-ALT / Mouse 3/4 Click to Instant Brake.\n");
+    printf("Escape to free mouse lock.\n");
     printf("----\n");
     printf("current epoch: %lu\n", time(0));
 
@@ -1717,6 +2065,7 @@ int main(int argc, char** argv)
     printf("----\n");
 
     // allow custom host
+    //sprintf(server_host, "127.0.0.1");
     sprintf(server_host, "vfcash.co.uk");
     if(argc >= 3){sprintf(server_host, "%s", argv[2]);}
 
@@ -1726,21 +2075,33 @@ int main(int argc, char** argv)
     else if(NUM_COMETS < 16){NUM_COMETS = 16;}
     rcs = NUM_COMETS / 8;
     rrcs = 1.f / (f32)rcs;
+    rncr = 11.f / NUM_COMETS;
 
     // allow custom msaa level
-    int msaa = 16;
     if(argc >= 5){msaa = atoi(argv[4]);}
 
     // is auto-roll enabled
     if(argc >= 6){autoroll = atoi(argv[5]);}
 
     // is centered
-    uint center = 1;
     if(argc >= 7){center = atoi(argv[6]);}
+
+    // controls type
+    if(argc >= 8){controls = atoi(argv[7]);}
+
+    // mouse sens
+    if(argc >= 9){sens = atof(argv[8]);}
+
+    // roll sens
+    if(argc >= 10){rollsens = atof(argv[9]);}
     
     printf("Asteroids: %hu\n", NUM_COMETS);
     printf("MSAA: %u\n", msaa);
     printf("Auto-Roll: %u\n", autoroll);
+    printf("Center-Window: %u\n", center);
+    printf("Control-Type: %u\n", controls);
+    printf("Mouse Sensitivity: %.0f (%g)\n", sens*10000.f, sens);
+    printf("Roll Sensitivity: %.0f (%g)\n", rollsens*10000.f, rollsens);
     printf("----\n");
     printf("Server Host/IP: %s\n", server_host);
     printf("----\n");
@@ -1750,13 +2111,14 @@ int main(int argc, char** argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
     glfwWindowHint(GLFW_SAMPLES, msaa);
-    window = glfwCreateWindow(winw, winh, "Fractal Attack", NULL, NULL);
+    window = glfwCreateWindow(winw, winh, "AstroImpact", NULL, NULL);
     if(!window)
     {
         printf("glfwCreateWindow() failed.\n");
         glfwTerminate();
         exit(EXIT_FAILURE);
     }
+    glfwSetWindowAttrib(window, GLFW_RESIZABLE, GLFW_FALSE);
     const GLFWvidmode* desktop = glfwGetVideoMode(glfwGetPrimaryMonitor());
     if(center == 1){glfwSetWindowPos(window, (desktop->width/2)-(winw/2), (desktop->height/2)-(winh/2));} // center window on desktop
     glfwSetWindowSizeCallback(window, window_size_callback);
@@ -1786,20 +2148,18 @@ int main(int argc, char** argv)
     esBind(GL_ARRAY_BUFFER, &mdlMenger.vid, ncube_vertices, ncube_vertices_size, GL_STATIC_DRAW);
     esBind(GL_ELEMENT_ARRAY_BUFFER, &mdlMenger.iid, ncube_indices, ncube_indices_size, GL_STATIC_DRAW);
 
-    // ***** BIND INNER *****
-    scaleBuffer(exo_vertices, exo_numvert*3);
-    esBind(GL_ARRAY_BUFFER, &mdlInner.vid, exo_vertices, exo_vertices_size, GL_STATIC_DRAW);
-    esBind(GL_ARRAY_BUFFER, &mdlInner.cid, inner_colors, inner_colors_size, GL_STATIC_DRAW);
-
     // ***** BIND EXO *****
     GLsizeiptr s = exo_numvert*3;
     for(GLsizeiptr i = 0; i < s; i+=3)
     {
-        const f32 g = (exo_colors[i] + exo_colors[i+1] + exo_colors[i+2]) / 3;
+        const f32 g = (exo_colors[i] + exo_colors[i+1] + exo_colors[i+2]) * 0.3333333433f;
         const f32 h = (1.f-g)*0.01f;
         vec v = {exo_vertices[i], exo_vertices[i+1], exo_vertices[i+2]};
         vNorm(&v);
         vMulS(&v, v, h);
+        exo_vertices[i]   *= GFX_SCALE;
+        exo_vertices[i+1] *= GFX_SCALE;
+        exo_vertices[i+2] *= GFX_SCALE;
         exo_vertices[i]   -= v.x;
         exo_vertices[i+1] -= v.y;
         exo_vertices[i+2] -= v.z;
@@ -1859,10 +2219,6 @@ int main(int argc, char** argv)
     esBind(GL_ARRAY_BUFFER, &mdlRock[7].iid, rock8_indices, rock8_indices_size, GL_STATIC_DRAW);
     esBind(GL_ARRAY_BUFFER, &mdlRock[7].tid, rock8_uvmap, rock8_uvmap_size, GL_STATIC_DRAW);
 
-    // ***** BIND LOW *****
-    esBind(GL_ARRAY_BUFFER, &mdlLow.vid, low_vertices, low_vertices_size, GL_STATIC_DRAW);
-    esBind(GL_ELEMENT_ARRAY_BUFFER, &mdlLow.iid, low_indices, low_indices_size, GL_STATIC_DRAW);
-
     // ***** BIND UFO *****
     scaleBuffer(ufo_vertices, ufo_numvert*3);
     esBind(GL_ARRAY_BUFFER, &mdlUfo.vid, ufo_vertices, ufo_vertices_size, GL_STATIC_DRAW);
@@ -1870,14 +2226,6 @@ int main(int argc, char** argv)
     esBind(GL_ARRAY_BUFFER, &mdlUfo.iid, ufo_indices, ufo_indices_size, GL_STATIC_DRAW);
     flipUV(ufo_uvmap, ufo_numvert*2);
     esBind(GL_ARRAY_BUFFER, &mdlUfo.tid, ufo_uvmap, ufo_uvmap_size, GL_STATIC_DRAW);
-
-    // ***** BIND UFO DAMAGED *****
-    // scaleBuffer(ufo_damaged_vertices, ufo_damaged_numvert*3);
-    // esBind(GL_ARRAY_BUFFER, &mdlUfoDamaged.vid, ufo_damaged_vertices, ufo_damaged_vertices_size, GL_STATIC_DRAW);
-    // esBind(GL_ARRAY_BUFFER, &mdlUfoDamaged.nid, ufo_damaged_normals, ufo_damaged_normals_size, GL_STATIC_DRAW);
-    // esBind(GL_ARRAY_BUFFER, &mdlUfoDamaged.iid, ufo_damaged_indices, ufo_damaged_indices_size, GL_STATIC_DRAW);
-    // flipUV(ufo_damaged_uvmap, ufo_damaged_numvert*2);
-    // esBind(GL_ARRAY_BUFFER, &mdlUfoDamaged.tid, ufo_damaged_uvmap, ufo_damaged_uvmap_size, GL_STATIC_DRAW);
 
     // ***** BIND UFO BEAM *****
     scaleBuffer(beam_vertices, beam_numvert*3);
@@ -1891,16 +2239,17 @@ int main(int argc, char** argv)
     esBind(GL_ARRAY_BUFFER, &mdlUfoLights.vid, ufo_lights_vertices, ufo_lights_vertices_size, GL_STATIC_DRAW);
     esBind(GL_ELEMENT_ARRAY_BUFFER, &mdlUfoLights.iid, ufo_lights_indices, ufo_lights_indices_size, GL_STATIC_DRAW);
 
-    // ***** BIND UFO_TRI *****
-    scaleBuffer(ufo_tri_vertices, ufo_tri_numvert*3);
-    esBind(GL_ARRAY_BUFFER, &mdlUfoTri.vid, ufo_tri_vertices, ufo_tri_vertices_size, GL_STATIC_DRAW);
-    esBind(GL_ELEMENT_ARRAY_BUFFER, &mdlUfoTri.iid, ufo_tri_indices, ufo_tri_indices_size, GL_STATIC_DRAW);
-
     // ***** BIND UFO SHIELD *****
-    scaleBuffer(ufo_shield_vertices, ufo_shield_numvert*3);
+    scaleBufferC(ufo_shield_vertices, ufo_shield_numvert*3, GFX_SCALE+0.007f);
     esBind(GL_ARRAY_BUFFER, &mdlUfoShield.vid, ufo_shield_vertices, ufo_shield_vertices_size, GL_STATIC_DRAW);
     esBind(GL_ARRAY_BUFFER, &mdlUfoShield.iid, ufo_shield_indices, ufo_shield_indices_size, GL_STATIC_DRAW);
     esBind(GL_ARRAY_BUFFER, &mdlUfoShield.cid, ufo_shield_colors, ufo_shield_colors_size, GL_STATIC_DRAW);
+
+    // ***** BIND UFO SHIELD *****
+    scaleBuffer(ufo_interior_vertices, ufo_interior_numvert*3);
+    esBind(GL_ARRAY_BUFFER, &mdlUfoInterior.vid, ufo_interior_vertices, ufo_interior_vertices_size, GL_STATIC_DRAW);
+    esBind(GL_ARRAY_BUFFER, &mdlUfoInterior.iid, ufo_interior_indices, ufo_interior_indices_size, GL_STATIC_DRAW);
+    esBind(GL_ARRAY_BUFFER, &mdlUfoInterior.cid, ufo_interior_colors, ufo_interior_colors_size, GL_STATIC_DRAW);
 
     // ***** LOAD TEXTURES *****
     tex[0] = esLoadTexture(512, 512, tex_rock1);
@@ -1929,6 +2278,7 @@ int main(int argc, char** argv)
     makeLambert2();
     makeLambert4();
     makeFullbright();
+    makeFullbright1();
     makePhong4();
 
 //*************************************
@@ -1949,7 +2299,7 @@ int main(int argc, char** argv)
     window_size_callback(window, winw, winh);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     shadeLambert(&position_id, &projection_id, &modelview_id, &lightpos_id, &color_id, &opacity_id);
-    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (GLfloat*) &projection.m[0][0]);
+    glUniformMatrix4fv(projection_id, 1, GL_FALSE, (f32*) &projection.m[0][0]);
     glUniform3f(lightpos_id, 0.f, 0.f, 0.f);
     glUniform1f(opacity_id, 1.f);
     glUniform3f(color_id, 1.f, 1.f, 0.f);
@@ -1958,36 +2308,36 @@ int main(int argc, char** argv)
     glEnableVertexAttribArray(position_id);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mdlMenger.iid);
     mIdent(&view);
-    mTranslate(&view, 0.f, 0.f, -0.19f);
+    mSetPos(&view, (vec){0.f, 0.f, -0.19f});
     glUniformMatrix4fv(modelview_id, 1, GL_FALSE, (f32*) &view.m[0][0]);
     glDrawElements(GL_TRIANGLES, ncube_numind, GL_UNSIGNED_INT, 0);
     glfwSwapBuffers(window);
+
+    // random start position
+    srandf(urand_int());
+    vRuvBT(&ppr);
+    vMulS(&ppr, ppr, 2.3f);
+
+    vec vd = ppr;
+    vInv(&vd);
+    vNorm(&vd);
+    mSetViewDir(&view, vd, (vec){0.f,1.f,0.f});
 
 #ifndef FAST_START
     // create net
     initNet();
 
     // wait until epoch
-    //printf("%lu\n%lu\n-\n", (time_t)((double)microtime()*0.000001), time(0));
-    while((time_t)((double)microtime()*0.000001) < sepoch)
-    {
-        usleep(1000); // this reduces the accuracy by the range in microseconds (1ms)
-        char title[256];
-        uint wp = 0;
-        for(uint i = 0; i < MAX_PLAYERS; i++)
-        {
-            const uint j = i*3;
-            if(players[j] != 0.f || players[j+1] != 0.f || players[j+2] != 0.f)
-                wp++;
-        }
-        sprintf(title, "Please wait... %lu seconds. Total players waiting %u.", sepoch-time(0), wp+1);
-        glfwSetWindowTitle(window, title);
-    }
+    uint64_t ttt = sepoch - 1;
+    for(uint64_t t1 = time(0); t1 < ttt; t1 = time(0)) // for loop abuse
+        sleep(ttt - t1);
+    ttt = sepoch * 1000000;
+    for(uint64_t t1 = microtime(); t1 < ttt; t1 = microtime())
+        usleep(ttt - t1);
 #endif
-    glfwSetWindowTitle(window, "Online Fractal Attack");
-    window_size_callback(window, winw, winh);
 
     // init
+    window_size_callback(window, winw, winh);
     t = glfwGetTime();
     lfct = t;
     
@@ -2000,8 +2350,17 @@ int main(int argc, char** argv)
         fc++;
     }
 
+    // send disconnect message
+    for(int i = 0; i < 3; i++)
+    {
+        unsigned char packet[9];
+        memcpy(&packet, &pid, sizeof(uint64_t));
+        memcpy(&packet[8], &(uint8_t){MSG_TYPE_PLAYER_DISCONNECTED}, sizeof(uint8_t));
+        csend(packet, 9);
+        usleep(100000);
+    }
+
     // done
-    damage = 1337.f;
     glfwDestroyWindow(window);
     glfwTerminate();
     exit(EXIT_SUCCESS);

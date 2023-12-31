@@ -18,7 +18,7 @@ uint64_t microtime(void) {
 	return (tv.tv_sec * 1000000) + tv.tv_usec;
 }
 
-uint8_t do_exo_impact(struct current_state *state, vec pos, float f) {
+void do_exo_impact(struct current_state *state, vec pos, float f) {
 	for (GLsizeiptr i = 0; i < exo_numvert; i++) {
 		if (!state->damage_index[i]) {
 			vec v = {exo_vertices[i*3], exo_vertices[(i*3)+1], exo_vertices[(i*3)+2]};
@@ -29,7 +29,7 @@ uint8_t do_exo_impact(struct current_state *state, vec pos, float f) {
 		}
 	}
 
-	return state->damage >= (exo_numvert/2);
+	return;
 }
 
 //void rand_asteroid(struct asteroid *asteroid) {
@@ -55,7 +55,7 @@ uint8_t do_exo_impact(struct current_state *state, vec pos, float f) {
 //	asteroid->vel.z = asteroid->vel.z * speed;
 //}
 
-void rand_asteroid(struct asteroid *asteroid, uint64_t timestamp) {
+void rand_asteroid(struct current_state *state, struct asteroid *asteroid, uint64_t timestamp) {
 	asteroid->gen_time = timestamp;
 
 	asteroid->rot = randf() * 300.f;
@@ -63,7 +63,7 @@ void rand_asteroid(struct asteroid *asteroid, uint64_t timestamp) {
 	f32 speed = 0.16f + (randf() * 0.08f);
 
 	vRuv(&asteroid->start_pos);
-	while (vSum(asteroid->start_pos) == 0.f) // can't use null vectors
+	while (vMag(asteroid->start_pos) == 0.f) // can't use null vectors
 		vRuv(&asteroid->start_pos);
 
 	vNorm(&asteroid->start_pos);
@@ -75,7 +75,7 @@ void rand_asteroid(struct asteroid *asteroid, uint64_t timestamp) {
 
 	vec impactpos;
 	vRuv(&impactpos);
-	while (vSum(impactpos) == 0.f)
+	while (vMag(impactpos) == 0.f)
 		vRuv(&impactpos);
 
 	vNorm(&impactpos);
@@ -87,15 +87,7 @@ void rand_asteroid(struct asteroid *asteroid, uint64_t timestamp) {
 
 	vNorm(&asteroid->vel);
 
-	f32 a = vMag(asteroid->vel);
-	f32 b = 2.f*vDot(asteroid->vel, asteroid->start_pos);
-	f32 c = vMag(asteroid->start_pos) - (EXO_IMPACT_RADIUS * EXO_IMPACT_RADIUS);
-
-	f32 dis = b*b - 4.f*a*c;
-	if (dis < 0.f) // safety, it *will* impact, but it might just scrape the edge (and float inaccuracies result in a negative number)
-		dis = 0.f;
-
-	f32 dist_to_impact = (-b - sqrtps(dis))/(2.f*a); // negative root for near end
+	f32 dist_to_impact = distance_to_impact(asteroid->start_pos, asteroid->vel, EXO_IMPACT_RADIUS_SQ);
 	asteroid->impact_pos = (vec){
 		asteroid->start_pos.x + asteroid->vel.x*dist_to_impact,
 		asteroid->start_pos.y + asteroid->vel.y*dist_to_impact,
@@ -107,53 +99,31 @@ void rand_asteroid(struct asteroid *asteroid, uint64_t timestamp) {
 	asteroid->vel.z *= speed;
 
 	speed = vMod(asteroid->vel);
-	asteroid->impact_time = timestamp + (uint64_t)(dist_to_impact * 1000000.f / speed);
-}
+	asteroid->impact_time = (uint64_t)(dist_to_impact * 1000000.f / speed);
+//	asteroid->final_impact_time = asteroid->impact_time;
 
-uint64_t min_asteroid_time(void) {
-	f32 speed = 0.24f;
+	asteroid->speed = speed;
 
-	vec pos = {1.f,0.f,0.f};
+//	asteroid->final_impact = 1;
+//	for (uint32_t i = 0; i <= (uint32_t)state->max_pod_id; i++) {
+//		struct pod *pod = &(state->pods[i]);
+//		if (pod->state == POD_STATE_SPAWNED) {
+//			vec offset;
+//			vSub(&offset, asteroid->start_pos, pod->pos);
+//			if (will_impact(offset, asteroid->vel, POD_IMPACT_RADIUS_SQ)) {
+//				uint64_t t = time_till_impact(offset, asteroid->vel, speed, POD_IMPACT_RADIUS_SQ);
+//				if (t < asteroid->impact_time) {
+//					asteroid->impact_time = t;
+//					asteroid->final_impact = 0;
+//				}
+//			}
+//		}
+//	}
 
-	vNorm(&pos);
-
-	f32 dist = 9.f;
-	pos.x *= dist;
-	pos.y *= dist;
-	pos.z *= dist;
-
-	vec impactpos = {1.f,0.f,0.f};
-
-	vNorm(&impactpos);
-	impactpos.x *= EXO_TARGET_RADIUS;
-	impactpos.y *= EXO_TARGET_RADIUS;
-	impactpos.z *= EXO_TARGET_RADIUS;
-
-	vec vel = {impactpos.x - pos.x, impactpos.y - pos.y, impactpos.z - pos.z};
-
-	vNorm(&vel);
-
-	f32 a = vMag(vel);
-	f32 b = 2.f*vDot(vel, pos);
-	f32 c = vMag(pos) - (EXO_IMPACT_RADIUS * EXO_IMPACT_RADIUS);
-
-	f32 dis = b*b - 4.f*a*c;
-	if (dis < 0.f) // safety, it *will* impact, but it might just scrape the edge (and float inaccuracies result in a negative number)
-		dis = 0.f;
-
-	f32 dist_to_impact = (-b - sqrtps(dis))/(2.f*a); // negative root for near end
-
-	vel.x *= speed;
-	vel.y *= speed;
-	vel.z *= speed;
-
-	speed = vMod(vel);
-
-	return (uint64_t)(dist_to_impact * 1000000.f / speed);
+	asteroid->impact_time += timestamp;
 }
 
 void rand_all_asteroids(struct current_state *state, uint64_t timestamp) {
-	for (uint32_t i = 0; i <= (uint32_t)state->max_asteroid_id; i++) {
-		rand_asteroid(&(state->asteroids[i]), timestamp);
-	}
+	for (uint32_t i = 0; i <= (uint32_t)state->max_asteroid_id; i++)
+		rand_asteroid(state, &(state->asteroids[i]), timestamp);
 }

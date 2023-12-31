@@ -81,7 +81,7 @@ void MainWindow::on_join_clicked()
     settings.endGroup();
     settings.sync();
 
-    execl("bin/fat", "bin/fat", ui->epoch->text().toStdString().c_str(), ui->hostname->text().toStdString().c_str(), QString::number(ui->asteroids->value()).toStdString().c_str(), QString::number(ui->msaa->value()).toStdString().c_str(), QString::number(ui->tilt->isChecked()).toStdString().c_str(), QString::number(ui->center->isChecked()).toStdString().c_str(), (char*)NULL);
+    execl("/usr/games/fat", "/usr/games/fat", ui->epoch->text().toStdString().c_str(), ui->hostname->text().toStdString().c_str(), QString::number(ui->asteroids->value()).toStdString().c_str(), QString::number(ui->msaa->value()).toStdString().c_str(), QString::number(ui->tilt->isChecked()).toStdString().c_str(), QString::number(ui->center->isChecked()).toStdString().c_str(), (char*)NULL);
 }
 
 
