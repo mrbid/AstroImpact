@@ -1,7 +1,7 @@
 # AstroImpact
 ### Save the planet from inevitable annihilation! Online, with your friends!
 
-* **FlatHub:** https://flathub.org/apps/com.voxdsp.AstroImpact
+* **Flathub:** https://flathub.org/apps/com.voxdsp.AstroImpact
 * **Snapcraft:** https://snapcraft.io/astroimpact
 * **Official Website:** [AstroImpact.net](https://AstroImpact.net)
 * **Video:** [Vimeo.com](https://vimeo.com/836414581) or [Youtube.com](https://www.youtube.com/watch?v=5qUD3DM8rD8)
@@ -25,7 +25,7 @@ Just make sure you all start on the same epoch! The first person to create the e
 **Standalone Binary**
 ```
 sudo apt install libglfw3 libglfw3-dev
-git clone https://notabug.org/AstroImpact/AstroImpact
+git clone https://github.com/mrbid/AstroImpact
 cd AstroImpact
 make
 ./bin/fat
@@ -33,7 +33,7 @@ make
 **Installer (.deb)**
 ```
 sudo apt install libglfw3 libglfw3-dev
-git clone https://notabug.org/AstroImpact/AstroImpact
+git clone https://github.com/mrbid/AstroImpact
 cd AstroImpact
 make deb
 sudo dpkg -i bin/fat.deb
@@ -86,4 +86,4 @@ https://www.solarsystemscope.com/textures/
 - https://www.deviantart.com/hhh316/art/Seamless-Fire-Texture-333891187
 
 #### UFO
-- https://www.turbosquid.com/3d-models/sci-fi-ufo-2-3d-model/1062607# _(This was provided from the Author James directly over email ([jamesrender3d@gmail.com](mailto:jamesrender3d@gmail.com)) and NOT purchased from Turbosquid under the Turbosquid license that does not allow use of assets in open-source projects, a custom license was agree'd over email with James where he agree'd we could use it in our open-source project and a payment was made to him based on this agreement this does not give anyone else the right to use this 3D asset (model or textures) without his permission or payment and this asset is not licensed under GPL)_
+- https://www.turbosquid.com/3d-models/sci-fi-ufo-2-3d-model/1062607# _(The UFO 3D model was provided by the original author James directly over email ([jamesrender3d@gmail.com](mailto:jamesrender3d@gmail.com)) and NOT purchased from Turbosquid under the [Turbosquid license](https://blog.turbosquid.com/turbosquid-3d-model-license) as the license does not allow use of assets in open-source projects, a custom license was agree'd over email with James that allows it to be used in our open-source project and a payment was made to James based on this agreement. This does not give anyone else the right to use the UFO 3D asset (model or textures) without James’ permission or payment and this asset is not licensed under the same GPL license that the source code of this project is)_
