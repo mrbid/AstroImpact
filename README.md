@@ -3,7 +3,7 @@
 
 * **Flathub:** https://flathub.org/apps/com.voxdsp.AstroImpact
 * **Snapcraft:** https://snapcraft.io/astroimpact
-* **Official Website:** [AstroImpact.net](https://AstroImpact.net)
+* **Official Website:** https://AstroImpact.net
 * **Video:** [Vimeo](https://vimeo.com/836414581) or [Youtube](https://www.youtube.com/watch?v=5qUD3DM8rD8)
 * **Forum:** https://forum.linuxfoundation.org/discussion/862942/astroimpact-the-foss-space-game
 
