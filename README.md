@@ -63,7 +63,7 @@ The CONTROLS setting in the config file allows you to swap between roll and yaw 
 
 ## Attributions
 
-Any assets not attributed here have been created specifically for this project, any assets made for this project automatically share the same license as the project itself. Some textures have been generated using [Stable Diffusion](https://easydiffusion.github.io/).
+Any assets not attributed here have been created specifically for this project, any assets made for this project automatically share the same license as the project itself. Some textures have been generated using [Easy Diffusion](https://easydiffusion.github.io/).
 
 #### Planet
 https://www.solarsystemscope.com/textures/
